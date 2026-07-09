@@ -8,7 +8,7 @@
   html, body, #root { height: 100%; margin: 0; }
   * { box-sizing: border-box; }
   body { background:#0c0f0d; color:#ece6d8; font-family: Georgia, 'Apple SD Gothic Neo', serif; }
-  #boot-error { display:none; padding:40px 24px; max-width:520px; margin:0 auto; line-height:1.7; font-size:14px; }
+  #boot-error { display:none; padding:40px 24px; max-width:560px; margin:0 auto; line-height:1.75; font-size:14px; }
   #boot-error h2 { color:#d4af37; }
   #boot-error code { background:#1a1d19; padding:2px 6px; border-radius:4px; font-size:13px; color:#f3e3a3; }
   #boot-error pre { background:#1a1d19; padding:12px; border-radius:8px; overflow-x:auto; font-size:12px; color:#d9534f; white-space:pre-wrap; }
@@ -18,7 +18,10 @@
 <div id="root"></div>
 <div id="boot-error"></div>
 
-<!-- React + Babel (빌드 도구 없이 브라우저에서 직접 변환) -->
+<!-- ⬇️ 설정 파일. 이 파일(firebase-config.js)만 수정하면 됩니다. -->
+<script src="firebase-config.js"></script>
+
+<!-- React + Babel -->
 <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
@@ -27,78 +30,74 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 
-  const firebaseConfig = {
-    apiKey: "AIzaSyDM-iYVVqgaxA10tcl5oV0JkifgA8Xc2tQ",
-    authDomain: "holdem-ba5ec.firebaseapp.com",
-    databaseURL: "https://holdem-ba5ec-default-rtdb.firebaseio.com",
-    projectId: "holdem-ba5ec",
-    storageBucket: "holdem-ba5ec.firebasestorage.app",
-    messagingSenderId: "687646477336",
-    appId: "1:687646477336:web:7963bfd5d3bc2ecb19c76d",
-    measurementId: "G-VG86GVZ7Y0"
-  };
+<script>
+/* ===== 아래는 수정할 필요 없습니다 ===== */
+var db = null;
 
-  // Initialize Firebase
-  firebase.initializeApp(firebaseConfig);
-  const analytics = getAnalytics(app);
+function showBootError(html) {
+  var el = document.getElementById("boot-error");
+  el.innerHTML = html;
+  el.style.display = "block";
+}
 
-  /* ---- 초기화 및 오류 안내 (수정 불필요) ---- */
-  var db = null;
-  var BOOT_ERROR = null;
+(function initFirebase() {
+  try {
+    var cfg = window.FIREBASE_CONFIG || window.firebaseConfig || null;
 
-  function showBootError(html) {
-    var el = document.getElementById("boot-error");
-    el.innerHTML = html;
-    el.style.display = "block";
-  }
-
-  (function initFirebase() {
-    try {
-      if (!window.firebase) {
-        BOOT_ERROR = "Firebase SDK 로드 실패";
-        showBootError(
-          "<h2>⚠️ Firebase 스크립트 로드 실패</h2>" +
-          "<p>인터넷 연결을 확인하거나, 회사망/방화벽이 <code>gstatic.com</code> 을 차단하는지 확인해주세요.</p>"
-        );
-        return;
-      }
-      if (!firebaseConfig || String(firebaseConfig.apiKey).indexOf("YOUR_") === 0 ||
-          !firebaseConfig.databaseURL || String(firebaseConfig.databaseURL).indexOf("YOUR_") >= 0) {
-        BOOT_ERROR = "Firebase 설정값 미입력";
-        showBootError(
-          "<h2>⚙️ Firebase 설정이 필요합니다</h2>" +
-          "<p>이 파일을 텍스트 편집기로 열어 <code>firebaseConfig</code> 부분(약 30번째 줄)을 본인 프로젝트 값으로 교체해주세요.</p>" +
-          "<p><b>설정값 얻는 방법:</b></p>" +
-          "<p>1. <code>console.firebase.google.com</code> 접속 → 프로젝트 생성<br>" +
-          "2. 빌드 &gt; Realtime Database → 데이터베이스 만들기 (테스트 모드)<br>" +
-          "3. 프로젝트 설정(톱니바퀴) → 내 앱 → 웹앱(&lt;/&gt;) 등록<br>" +
-          "4. 화면에 나오는 <code>firebaseConfig = {...}</code> 를 통째로 복사해서 이 파일에 붙여넣기</p>" +
-          "<p>※ <code>databaseURL</code> 항목이 없다면 Realtime Database를 아직 안 만든 것입니다. 2번을 먼저 진행하세요.</p>"
-        );
-        return;
-      }
-      firebase.initializeApp(firebaseConfig);
-      db = firebase.database();
-    } catch (e) {
-      BOOT_ERROR = e.message || String(e);
+    if (!window.firebase) {
       showBootError(
-        "<h2>⚠️ Firebase 초기화 오류</h2>" +
-        "<p>설정값이 올바른지 확인해주세요. 특히 <code>databaseURL</code> 이 정확해야 합니다.</p>" +
-        "<pre>" + (e.message || e) + "</pre>"
+        "<h2>⚠️ Firebase 스크립트 로드 실패</h2>" +
+        "<p>인터넷 연결을 확인하거나, 네트워크가 <code>gstatic.com</code> 을 차단하는지 확인해주세요.</p>"
       );
+      return;
     }
-  })();
+
+    if (!cfg) {
+      showBootError(
+        "<h2>⚙️ 설정 파일을 찾을 수 없습니다</h2>" +
+        "<p><code>firebase-config.js</code> 파일이 <code>index.html</code> 과 <b>같은 폴더</b>에 있는지 확인해주세요.</p>"
+      );
+      return;
+    }
+
+    var missing = [];
+    ["apiKey","authDomain","databaseURL","projectId","appId"].forEach(function (k) {
+      var v = cfg[k];
+      if (!v || String(v).indexOf("여기에") === 0 || String(v).indexOf("YOUR_") === 0) missing.push(k);
+    });
+
+    if (missing.length) {
+      showBootError(
+        "<h2>⚙️ Firebase 설정이 필요합니다</h2>" +
+        "<p><code>firebase-config.js</code> 파일에서 아래 항목을 아직 채우지 않으셨습니다:</p>" +
+        "<pre>" + missing.join("\n") + "</pre>" +
+        "<p><b>값 찾는 방법</b><br>" +
+        "1. <code>console.firebase.google.com</code> 접속<br>" +
+        "2. 프로젝트 설정(⚙️) → 내 앱 → 웹앱 클릭<br>" +
+        "3. 화면에 보이는 <code>firebaseConfig</code> 안의 값들을 하나씩 옮겨 적기</p>" +
+        "<p>※ <code>databaseURL</code> 이 안 보이면 Realtime Database를 먼저 만드세요 " +
+        "(빌드 → Realtime Database → 데이터베이스 만들기 → 테스트 모드).</p>"
+      );
+      return;
+    }
+
+    firebase.initializeApp(cfg);
+    db = firebase.database();
+  } catch (e) {
+    showBootError(
+      "<h2>⚠️ Firebase 초기화 오류</h2>" +
+      "<p><code>firebase-config.js</code> 의 값이 올바른지 확인해주세요. 특히 <code>databaseURL</code>.</p>" +
+      "<pre>" + (e.message || e) + "</pre>"
+    );
+  }
+})();
 </script>
 
 <script type="text/babel" data-presets="react">
 /* =========================================================================
    No-Limit Texas Hold'em TOURNAMENT
-   - 시작 칩 30,000 / 최대 9명 / 리바이 없음 / 1등까지 (Winner takes all)
-   - 블라인드 레벨: 5분마다 상승
-     L1~L5:  100/200 ~ 500/1000
-     L6~L10: 1000/2000 ~ 5000/10000  (×10)
-     이후 계속 ×10 반복
-   - 블라인드는 "핸드 시작 시점"의 레벨 기준으로 적용
+   시작 칩 30,000 / 최대 9명 / 리바이 없음 / 1등까지 (Winner takes all)
+   블라인드: 5분마다 상승. L1~L5: 100/200 ~ 500/1000, 이후 5레벨마다 ×10
    ========================================================================= */
 var useState = React.useState;
 var useEffect = React.useEffect;
@@ -146,7 +145,6 @@ function freshDeck() {
   return deck;
 }
 
-/* ---------- hand evaluation ---------- */
 function evaluate5(cards) {
   var ranks = cards.map(function (c) { return c[0]; }).sort(function (a, b) { return b - a; });
   var suits = cards.map(function (c) { return c[1]; });
@@ -204,24 +202,8 @@ function best7(cards7) {
 
 var HAND_NAMES = ["하이카드","원페어","투페어","트리플","스트레이트","플러시","풀하우스","포카드","스트레이트 플러시"];
 
-/* ---------- game state helpers ---------- */
 function eligibleActors(state) {
   return state.players.filter(function (p) { return p.status === "active"; });
-}
-
-function nextSeat(state, fromSeat, skipFoldedAllin) {
-  var n = state.players.length;
-  var seat = fromSeat;
-  for (var i = 0; i < n; i++) {
-    seat = (seat + 1) % n;
-    var p = null;
-    for (var k = 0; k < n; k++) if (state.players[k].seat === seat) { p = state.players[k]; break; }
-    if (!p) continue;
-    if (p.status === "out") continue;
-    if (skipFoldedAllin && (p.status === "folded" || p.status === "allin")) continue;
-    return p;
-  }
-  return null;
 }
 
 function findBySeat(state, seat) {
@@ -233,6 +215,20 @@ function findBySeat(state, seat) {
 function findById(state, id) {
   for (var k = 0; k < state.players.length; k++)
     if (state.players[k].id === id) return state.players[k];
+  return null;
+}
+
+function nextSeat(state, fromSeat, skipFoldedAllin) {
+  var n = state.players.length;
+  var seat = fromSeat;
+  for (var i = 0; i < n; i++) {
+    seat = (seat + 1) % n;
+    var p = findBySeat(state, seat);
+    if (!p) continue;
+    if (p.status === "out") continue;
+    if (skipFoldedAllin && (p.status === "folded" || p.status === "allin")) continue;
+    return p;
+  }
   return null;
 }
 
@@ -294,9 +290,7 @@ function resolveShowdown(state) {
   var inHand = state.players.filter(function (p) { return p.status !== "folded" && p.status !== "out"; });
   state.log.unshift("--- 쇼다운 ---");
   var results = {};
-  inHand.forEach(function (p) {
-    results[p.id] = best7(p.cards.concat(state.community));
-  });
+  inHand.forEach(function (p) { results[p.id] = best7(p.cards.concat(state.community)); });
 
   var pots = buildSidePots(state);
   pots.forEach(function (pot, idx) {
@@ -459,7 +453,6 @@ function startHand(state) {
   return state;
 }
 
-/* ---------- Firebase normalization ---------- */
 function normalizeRoom(data) {
   if (!data) return null;
   return {
@@ -501,8 +494,6 @@ function emptyRoom() {
   };
 }
 
-/* ---------- React component ---------- */
-
 function App() {
   var meState = useState(null); var me = meState[0], setMe = meState[1];
   var nameState = useState(""); var nameInput = nameState[0], setNameInput = nameState[1];
@@ -515,7 +506,6 @@ function App() {
   useEffect(function () {
     var saved = localStorage.getItem(ID_KEY);
     if (saved) { try { setMe(JSON.parse(saved)); } catch (e) {} }
-
     if (!db) { setLoading(false); return; }
 
     var ref = db.ref(ROOM_PATH);
@@ -525,7 +515,7 @@ function App() {
       setConnError(null);
     }, function (err) {
       setLoading(false);
-      setConnError("데이터베이스 접근 오류: " + (err.message || err) + " — Realtime Database 규칙에서 읽기/쓰기를 허용했는지 확인해주세요.");
+      setConnError("데이터베이스 접근 오류: " + (err.message || err));
     });
     var tick = setInterval(function () { setTick(function (t) { return t + 1; }); }, 1000);
     return function () { ref.off("value", listener); clearInterval(tick); };
@@ -548,14 +538,13 @@ function App() {
       current = current || emptyRoom();
       if (current.stage !== "lobby") { alert("이미 토너먼트가 시작되었습니다."); return; }
       if (current.players.length >= MAX_PLAYERS) { alert("정원(" + MAX_PLAYERS + "명)이 가득 찼습니다."); return; }
-      var exists = current.players.some(function (p) { return p.name === trimmed; });
-      if (exists) { alert("이미 사용 중인 이름입니다. 다른 이름을 입력해주세요."); return; }
-
+      if (current.players.some(function (p) { return p.name === trimmed; })) {
+        alert("이미 사용 중인 이름입니다."); return;
+      }
       var id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ("id-" + Math.random().toString(36).slice(2) + Date.now());
       var identity = { id: id, name: trimmed };
       localStorage.setItem(ID_KEY, JSON.stringify(identity));
       setMe(identity);
-
       current.players.push({
         id: id, name: trimmed, stack: STARTING_STACK, seat: current.players.length,
         status: "waiting", cards: [], betThisRound: 0, totalBetThisHand: 0,
@@ -637,9 +626,7 @@ function App() {
     });
   }
 
-  /* ---------------- render ---------------- */
-
-  if (!db) return null; // boot-error div가 이미 안내를 표시함
+  if (!db) return null;
 
   if (connError) {
     return (
@@ -647,7 +634,7 @@ function App() {
         <div style={S.center}>
           <div style={S.logo}>⚠️ 연결 오류</div>
           <p style={S.subtle}>{connError}</p>
-          <p style={S.tiny}>Firebase 콘솔 &gt; Realtime Database &gt; 규칙에서 아래처럼 설정되어 있는지 확인:</p>
+          <p style={S.tiny}>Firebase 콘솔 &gt; Realtime Database &gt; 규칙 탭에서 아래처럼 설정 후 "게시":</p>
           <pre style={{ background: "#1a1d19", padding: 12, borderRadius: 8, fontSize: 12, textAlign: "left", color: "#f3e3a3" }}>{'{\n  "rules": {\n    ".read": true,\n    ".write": true\n  }\n}'}</pre>
         </div>
       </div>
@@ -663,8 +650,8 @@ function App() {
   var liveBlinds = blindsForLevel(liveLvl);
   var nextBlinds = blindsForLevel(liveLvl + 1);
   var remain = r.tournamentStartAt ? secsToNextLevel(r.tournamentStartAt) : LEVEL_SECONDS;
-  var mm = String(Math.floor(remain / 60)).padStart(2, "0");
-  var ss = String(remain % 60).padStart(2, "0");
+  var mm = String(Math.floor(remain / 60)); while (mm.length < 2) mm = "0" + mm;
+  var ss = String(remain % 60); while (ss.length < 2) ss = "0" + ss;
 
   if (!me) {
     return (
@@ -677,15 +664,14 @@ function App() {
             onKeyDown={function (e) { if (e.key === "Enter") joinTable(); }} />
           <button style={S.btnGold} onClick={joinTable}>테이블 입장</button>
           <p style={S.tiny}>시작 칩 {STARTING_STACK.toLocaleString()} · 최대 {MAX_PLAYERS}명 · 레벨당 5분</p>
-          <p style={S.tiny}>블라인드 100/200부터 시작, 5레벨마다 ×10</p>
+          <p style={S.tiny}>블라인드 100/200 시작, 5레벨마다 ×10</p>
         </div>
       </div>
     );
   }
 
   if (r.stage === "lobby" || !meP) {
-    var myEntry = null;
-    for (var k = 0; k < r.players.length; k++) if (r.players[k].id === me.id) myEntry = r.players[k];
+    var myEntry = findById(r, me.id);
     return (
       <div style={S.wrap}>
         <div style={S.center}>
@@ -802,7 +788,7 @@ function App() {
           <div style={S.stageLabel}>{stageTxt}</div>
         </div>
 
-        <PlayerChip p={meP} isDealer={meP.seat === r.dealerSeat} isTurn={isMyTurn} reveal={true} isMe={true} />
+        <PlayerChip p={meP} isDealer={meP.seat === r.dealerSeat} isTurn={isMyTurn} reveal={true} />
       </div>
 
       {r.stage === "handover" && (
@@ -890,13 +876,13 @@ var S = {
   input: { width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 8, border: "1px solid #3a3f3a", background: "#1a1d19", color: "#ece6d8", fontSize: 16, marginBottom: 12, outline: "none" },
   btnGold: { width: "100%", padding: "12px 14px", borderRadius: 8, border: "none", background: "linear-gradient(180deg,#e7c465,#b9942f)", color: "#1a1500", fontWeight: 700, fontSize: 15, cursor: "pointer", marginBottom: 10 },
   btnGhost: { width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #3a3f3a", background: "transparent", color: "#8a8576", fontSize: 13, cursor: "pointer" },
-  lobbyList: { background: "#14181580", border: "1px solid #2a2f29", borderRadius: 8, padding: 10, marginBottom: 16, textAlign: "left" },
+  lobbyList: { background: "rgba(20,24,21,0.5)", border: "1px solid #2a2f29", borderRadius: 8, padding: 10, marginBottom: 16, textAlign: "left" },
   lobbyRow: { display: "flex", justifyContent: "space-between", padding: "6px 4px", borderBottom: "1px solid #22251f", fontSize: 14 },
   tableWrap: { minHeight: "100vh", background: "#0c0f0d", color: "#ece6d8", display: "flex", flexDirection: "column" },
   topBar: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px solid #1f2420" },
   brand: { color: "#d4af37", fontWeight: 700, fontSize: 15 },
   btnTiny: { background: "transparent", border: "1px solid #3a3f3a", color: "#8a8576", fontSize: 11, borderRadius: 6, padding: "4px 8px", cursor: "pointer" },
-  levelBar: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 14px", background: "#12161380", borderBottom: "1px solid #1f2420", gap: 8, flexWrap: "wrap" },
+  levelBar: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 14px", background: "rgba(18,22,19,0.5)", borderBottom: "1px solid #1f2420", gap: 8, flexWrap: "wrap" },
   levelBadge: { background: "#d4af37", color: "#1a1500", fontWeight: 800, fontSize: 12, borderRadius: 6, padding: "2px 8px" },
   levelBlind: { color: "#f3e3a3", fontWeight: 700, fontSize: 14, marginLeft: 6 },
   levelTimer: { fontSize: 13, color: "#b9b2a0" },
