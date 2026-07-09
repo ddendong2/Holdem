@@ -28,14 +28,15 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 
 <script>
-  /* =====================================================================
-     ⚠️ [필수 설정] 여기에 본인의 Firebase 설정값을 붙여넣으세요.
-     Firebase 콘솔(console.firebase.google.com)
-       > 프로젝트 설정(톱니바퀴) > 내 앱 > 웹앱 > SDK 설정 및 구성
-     에서 복사한 firebaseConfig 객체로 아래 전체를 교체하면 됩니다.
-     databaseURL 이 반드시 포함되어야 합니다!
-     (Realtime Database를 먼저 만들어야 databaseURL이 생깁니다)
-     ===================================================================== */
+const firebaseConfig = {
+  apiKey: "...",
+  authDomain: "...",
+  databaseURL: "https://...firebaseio.com",
+  projectId: "...",
+  storageBucket: "...",
+  messagingSenderId: "...",
+  appId: "..."
+};
   var firebaseConfig = {
     apiKey: "YOUR_API_KEY",
     authDomain: "YOUR_PROJECT.firebaseapp.com",
