@@ -902,7 +902,7 @@ function App() {
       var p = findById(cur, me.id);
       if (!p) return;
       p.ready = !p.ready;
-      var allReady = cur.players.length >= 2 && cur.players.every(function (x) { return x.ready; });
+      var allReady = cur.players.filter(function (x) { return x.ready; }).length >= 2;
       cur.allReadyAt = allReady ? Date.now() : null;
       return saveRoom(cur);
     });
@@ -915,7 +915,7 @@ function App() {
         cur.players = cur.players.filter(function (p) { return p.id !== me.id; });
         cur.players.sort(function (x, y) { return x.seat - y.seat; });
         cur.players.forEach(function (p, i) { p.seat = i; });
-        var allReady = cur.players.length >= 2 && cur.players.every(function (x) { return x.ready; });
+        var allReady = cur.players.filter(function (x) { return x.ready; }).length >= 2;
         cur.allReadyAt = allReady ? Date.now() : null;
         saveRoom(cur);
       }
@@ -1049,7 +1049,7 @@ function App() {
   /* ========== [3] 로비 (준비 기반 자동 시작) ========== */
   if (r.stage === "lobby") {
     var readyCount = r.players.filter(function (p) { return p.ready; }).length;
-    var allReady = r.players.length >= 2 && readyCount === r.players.length;
+    var allReady = readyCount >= 2;
     return (
       <div style={S.wrap}><div style={S.center}>
         <div style={S.lobbyTopRow}>
