@@ -12,6 +12,7 @@
   #boot-error h2 { color:#d4af37; }
   #boot-error code { background:#1a1d19; padding:2px 6px; border-radius:4px; font-size:13px; color:#f3e3a3; }
   #boot-error pre { background:#1a1d19; padding:12px; border-radius:8px; overflow-x:auto; font-size:12px; color:#d9534f; white-space:pre-wrap; }
+  @keyframes pulseRed { 0%,100% { opacity:1; } 50% { opacity:0.45; } }
 </style>
 </head>
 <body>
@@ -21,12 +22,10 @@
 <!-- ⬇️ 설정 파일. 이 파일(firebase-config.js)만 수정하면 됩니다. -->
 <script src="firebase-config.js"></script>
 
-<!-- React + Babel -->
 <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 
-<!-- Firebase (compat SDK) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 
@@ -43,68 +42,53 @@ function showBootError(html) {
 (function initFirebase() {
   try {
     var cfg = window.FIREBASE_CONFIG || window.firebaseConfig || null;
-
     if (!window.firebase) {
-      showBootError(
-        "<h2>⚠️ Firebase 스크립트 로드 실패</h2>" +
-        "<p>인터넷 연결을 확인하거나, 네트워크가 <code>gstatic.com</code> 을 차단하는지 확인해주세요.</p>"
-      );
+      showBootError("<h2>⚠️ Firebase 스크립트 로드 실패</h2><p>인터넷 연결 또는 <code>gstatic.com</code> 차단 여부를 확인해주세요.</p>");
       return;
     }
-
     if (!cfg) {
-      showBootError(
-        "<h2>⚙️ 설정 파일을 찾을 수 없습니다</h2>" +
-        "<p><code>firebase-config.js</code> 파일이 <code>index.html</code> 과 <b>같은 폴더</b>에 있는지 확인해주세요.</p>"
-      );
+      showBootError("<h2>⚙️ 설정 파일을 찾을 수 없습니다</h2><p><code>firebase-config.js</code> 가 <code>index.html</code> 과 같은 폴더에 있는지 확인해주세요.</p>");
       return;
     }
-
     var missing = [];
     ["apiKey","authDomain","databaseURL","projectId","appId"].forEach(function (k) {
       var v = cfg[k];
       if (!v || String(v).indexOf("여기에") === 0 || String(v).indexOf("YOUR_") === 0) missing.push(k);
     });
-
     if (missing.length) {
       showBootError(
         "<h2>⚙️ Firebase 설정이 필요합니다</h2>" +
-        "<p><code>firebase-config.js</code> 파일에서 아래 항목을 아직 채우지 않으셨습니다:</p>" +
+        "<p><code>firebase-config.js</code> 에서 아래 항목을 아직 채우지 않으셨습니다:</p>" +
         "<pre>" + missing.join("\n") + "</pre>" +
-        "<p><b>값 찾는 방법</b><br>" +
-        "1. <code>console.firebase.google.com</code> 접속<br>" +
-        "2. 프로젝트 설정(⚙️) → 내 앱 → 웹앱 클릭<br>" +
-        "3. 화면에 보이는 <code>firebaseConfig</code> 안의 값들을 하나씩 옮겨 적기</p>" +
-        "<p>※ <code>databaseURL</code> 이 안 보이면 Realtime Database를 먼저 만드세요 " +
-        "(빌드 → Realtime Database → 데이터베이스 만들기 → 테스트 모드).</p>"
+        "<p>Firebase 콘솔 → 프로젝트 설정(⚙️) → 내 앱 → 웹앱 에서 값을 옮겨 적으세요.<br>" +
+        "※ <code>import</code> 나 <code>initializeApp</code> 같은 코드는 넣지 말고 <b>값만</b> 넣으세요.</p>"
       );
       return;
     }
-
     firebase.initializeApp(cfg);
     db = firebase.database();
   } catch (e) {
-    showBootError(
-      "<h2>⚠️ Firebase 초기화 오류</h2>" +
-      "<p><code>firebase-config.js</code> 의 값이 올바른지 확인해주세요. 특히 <code>databaseURL</code>.</p>" +
-      "<pre>" + (e.message || e) + "</pre>"
-    );
+    showBootError("<h2>⚠️ Firebase 초기화 오류</h2><p><code>databaseURL</code> 등 값이 올바른지 확인해주세요.</p><pre>" + (e.message || e) + "</pre>");
   }
 })();
 </script>
 
 <script type="text/babel" data-presets="react">
 /* =========================================================================
-   No-Limit Texas Hold'em TOURNAMENT
-   시작 칩 30,000 / 최대 9명 / 리바이 없음 / 1등까지 (Winner takes all)
-   블라인드: 5분마다 상승. L1~L5: 100/200 ~ 500/1000, 이후 5레벨마다 ×10
+   NL 홀덤 토너먼트
+   시작칩 30,000 / 최대 9명 / 리바이 없음 / 1등까지
+   블라인드 5분마다 상승 (L1~L5: 100/200~500/1000, 이후 5레벨마다 ×10)
+   액션 제한 10초 · 레벨 2 전까지 레이트 레지스트레이션 · 팟 비율 베팅
    ========================================================================= */
 var useState = React.useState;
 var useEffect = React.useEffect;
+var useRef = React.useRef;
 
 var STARTING_STACK = 30000;
 var MAX_PLAYERS = 9;
 var LEVEL_SECONDS = 5 * 60;
+var TURN_SECONDS = 10;
+var LATE_REG_UNTIL_LEVEL = 1;
 var ROOM_PATH = "holdem_tourney";
 var ID_KEY = "holdem_identity";
 
@@ -114,24 +98,22 @@ function blindsForLevel(levelIdx) {
   var sb = (pos + 1) * 100 * Math.pow(10, group);
   return { sb: sb, bb: sb * 2 };
 }
-
 function currentLevelIdx(startAt) {
   if (!startAt) return 0;
-  var elapsed = Math.max(0, (Date.now() - startAt) / 1000);
-  return Math.floor(elapsed / LEVEL_SECONDS);
+  return Math.floor(Math.max(0, (Date.now() - startAt) / 1000) / LEVEL_SECONDS);
 }
-
 function secsToNextLevel(startAt) {
   if (!startAt) return LEVEL_SECONDS;
   var elapsed = Math.max(0, (Date.now() - startAt) / 1000);
   return Math.ceil(LEVEL_SECONDS - (elapsed % LEVEL_SECONDS));
 }
+function pad2(n) { var s = String(n); return s.length < 2 ? "0" + s : s; }
 
 var SUITS = ["s", "h", "d", "c"];
 var SUIT_GLYPH = { s: "♠", h: "♥", d: "♦", c: "♣" };
-var SUIT_COLOR = { s: "#e7e2d6", c: "#e7e2d6", h: "#d9534f", d: "#d9534f" };
+/* [1] 스페이드/클로버 = 진한 검정 */
+var SUIT_COLOR = { s: "#101010", c: "#101010", h: "#c62828", d: "#c62828" };
 var RANK_TXT = { 11: "J", 12: "Q", 13: "K", 14: "A" };
-
 function rankLabel(r) { return RANK_TXT[r] || String(r); }
 
 function freshDeck() {
@@ -140,7 +122,7 @@ function freshDeck() {
     for (var r = 2; r <= 14; r++) deck.push([r, SUITS[si]]);
   for (var i = deck.length - 1; i > 0; i--) {
     var j = Math.floor(Math.random() * (i + 1));
-    var tmp = deck[i]; deck[i] = deck[j]; deck[j] = tmp;
+    var t = deck[i]; deck[i] = deck[j]; deck[j] = t;
   }
   return deck;
 }
@@ -151,17 +133,14 @@ function evaluate5(cards) {
   var isFlush = suits.every(function (s) { return s === suits[0]; });
   var counts = {};
   ranks.forEach(function (r) { counts[r] = (counts[r] || 0) + 1; });
-  var byCount = Object.keys(counts)
-    .map(function (r) { return [Number(r), counts[r]]; })
+  var byCount = Object.keys(counts).map(function (r) { return [Number(r), counts[r]]; })
     .sort(function (a, b) { return (b[1] - a[1]) || (b[0] - a[0]); });
-
   var uniq = ranks.filter(function (v, i, arr) { return arr.indexOf(v) === i; });
   var straightHigh = 0;
   if (uniq.length === 5) {
     if (uniq[0] - uniq[4] === 4) straightHigh = uniq[0];
     else if (uniq.join(",") === "14,5,4,3,2") straightHigh = 5;
   }
-
   if (straightHigh && isFlush) return [8, straightHigh];
   if (byCount[0][1] === 4) return [7, byCount[0][0], byCount[1][0]];
   if (byCount[0][1] === 3 && byCount[1][1] === 2) return [6, byCount[0][0], byCount[1][0]];
@@ -175,289 +154,235 @@ function evaluate5(cards) {
   if (byCount[0][1] === 2) return [1, byCount[0][0]].concat(byCount.slice(1).map(function (x) { return x[0]; }));
   return [0].concat(ranks);
 }
-
 function cmpScore(a, b) {
   var len = Math.max(a.length, b.length);
-  for (var i = 0; i < len; i++) {
-    var x = a[i] || 0, y = b[i] || 0;
-    if (x !== y) return x - y;
-  }
+  for (var i = 0; i < len; i++) { var x = a[i] || 0, y = b[i] || 0; if (x !== y) return x - y; }
   return 0;
 }
-
-function best7(cards7) {
-  var best = null;
-  var n = cards7.length;
-  for (var a = 0; a < n; a++)
-    for (var b = a + 1; b < n; b++)
-      for (var c = b + 1; c < n; c++)
-        for (var d = c + 1; d < n; d++)
-          for (var e = d + 1; e < n; e++) {
-            var five = [cards7[a], cards7[b], cards7[c], cards7[d], cards7[e]];
-            var score = evaluate5(five);
-            if (!best || cmpScore(score, best.score) > 0) best = { score: score, five: five };
-          }
+function best7(c7) {
+  var best = null, n = c7.length;
+  for (var a = 0; a < n; a++) for (var b = a+1; b < n; b++) for (var c = b+1; c < n; c++)
+    for (var d = c+1; d < n; d++) for (var e = d+1; e < n; e++) {
+      var five = [c7[a], c7[b], c7[c], c7[d], c7[e]];
+      var sc = evaluate5(five);
+      if (!best || cmpScore(sc, best.score) > 0) best = { score: sc, five: five };
+    }
   return best;
 }
-
 var HAND_NAMES = ["하이카드","원페어","투페어","트리플","스트레이트","플러시","풀하우스","포카드","스트레이트 플러시"];
 
-function eligibleActors(state) {
-  return state.players.filter(function (p) { return p.status === "active"; });
-}
-
-function findBySeat(state, seat) {
-  for (var k = 0; k < state.players.length; k++)
-    if (state.players[k].seat === seat) return state.players[k];
+function findBySeat(st, seat) {
+  for (var k = 0; k < st.players.length; k++) if (st.players[k].seat === seat) return st.players[k];
   return null;
 }
-
-function findById(state, id) {
-  for (var k = 0; k < state.players.length; k++)
-    if (state.players[k].id === id) return state.players[k];
+function findById(st, id) {
+  for (var k = 0; k < st.players.length; k++) if (st.players[k].id === id) return st.players[k];
   return null;
 }
-
-function nextSeat(state, fromSeat, skipFoldedAllin) {
-  var n = state.players.length;
-  var seat = fromSeat;
+function inHandPlayers(st) {
+  return st.players.filter(function (p) { return p.status === "active" || p.status === "allin"; });
+}
+function eligibleActors(st) {
+  return st.players.filter(function (p) { return p.status === "active"; });
+}
+function nextSeat(st, fromSeat, opts) {
+  opts = opts || {};
+  var n = st.players.length, seat = fromSeat;
   for (var i = 0; i < n; i++) {
     seat = (seat + 1) % n;
-    var p = findBySeat(state, seat);
-    if (!p) continue;
-    if (p.status === "out") continue;
-    if (skipFoldedAllin && (p.status === "folded" || p.status === "allin")) continue;
+    var p = findBySeat(st, seat);
+    if (!p || p.status === "out") continue;
+    if (opts.actableOnly && p.status !== "active") continue;
     return p;
   }
   return null;
 }
 
-function bettingRoundComplete(state) {
-  var inHand = state.players.filter(function (p) { return p.status === "active" || p.status === "allin"; });
-  if (inHand.length <= 1) return true;
-  var actors = eligibleActors(state);
+/* [3] 턴이 바뀌면 10초 데드라인 갱신 */
+function setTurn(st, id) {
+  st.currentTurnId = id || null;
+  st.turnDeadline = id ? (Date.now() + TURN_SECONDS * 1000) : null;
+}
+
+function bettingRoundComplete(st) {
+  if (inHandPlayers(st).length <= 1) return true;
+  var actors = eligibleActors(st);
   if (actors.length === 0) return true;
-  return actors.every(function (p) { return p.hasActed && p.betThisRound === state.currentBet; });
+  return actors.every(function (p) { return p.hasActed && p.betThisRound === st.currentBet; });
 }
-
-function resetRoundFlags(state) {
-  state.players.forEach(function (p) { p.betThisRound = 0; p.hasActed = false; });
-  state.currentBet = 0;
-  state.minRaise = state.bb;
-  state.lastAggressorId = null;
+function resetRoundFlags(st) {
+  st.players.forEach(function (p) { p.betThisRound = 0; p.hasActed = false; });
+  st.currentBet = 0; st.minRaise = st.bb; st.lastAggressorId = null;
 }
-
-function dealStreet(state) {
-  if (state.stage === "preflop") {
-    state.deck.pop();
-    state.community.push(state.deck.pop(), state.deck.pop(), state.deck.pop());
-    state.stage = "flop";
-  } else if (state.stage === "flop") {
-    state.deck.pop();
-    state.community.push(state.deck.pop());
-    state.stage = "turn";
-  } else if (state.stage === "turn") {
-    state.deck.pop();
-    state.community.push(state.deck.pop());
-    state.stage = "river";
-  }
+function dealStreet(st) {
+  if (st.stage === "preflop") { st.deck.pop(); st.community.push(st.deck.pop(), st.deck.pop(), st.deck.pop()); st.stage = "flop"; }
+  else if (st.stage === "flop") { st.deck.pop(); st.community.push(st.deck.pop()); st.stage = "turn"; }
+  else if (st.stage === "turn") { st.deck.pop(); st.community.push(st.deck.pop()); st.stage = "river"; }
 }
-
-function buildSidePots(state) {
-  var contributors = state.players.filter(function (p) { return p.totalBetThisHand > 0; });
-  var levelSet = {};
-  contributors.forEach(function (p) { levelSet[p.totalBetThisHand] = true; });
-  var levels = Object.keys(levelSet).map(Number).sort(function (a, b) { return a - b; });
-  var pots = [];
-  var prevLevel = 0;
-  levels.forEach(function (level) {
-    var layer = contributors.filter(function (p) { return p.totalBetThisHand >= level; });
-    var amount = (level - prevLevel) * layer.length;
-    if (amount > 0) {
-      pots.push({
-        amount: amount,
-        eligiblePlayerIds: state.players
-          .filter(function (p) { return p.totalBetThisHand >= level && p.status !== "folded"; })
-          .map(function (p) { return p.id; })
-      });
-    }
-    prevLevel = level;
+function buildSidePots(st) {
+  var contrib = st.players.filter(function (p) { return p.totalBetThisHand > 0; });
+  var set = {}; contrib.forEach(function (p) { set[p.totalBetThisHand] = true; });
+  var levels = Object.keys(set).map(Number).sort(function (a, b) { return a - b; });
+  var pots = [], prev = 0;
+  levels.forEach(function (lv) {
+    var layer = contrib.filter(function (p) { return p.totalBetThisHand >= lv; });
+    var amt = (lv - prev) * layer.length;
+    if (amt > 0) pots.push({
+      amount: amt,
+      eligiblePlayerIds: st.players.filter(function (p) {
+        return p.totalBetThisHand >= lv && (p.status === "active" || p.status === "allin");
+      }).map(function (p) { return p.id; })
+    });
+    prev = lv;
   });
   return pots;
 }
-
-function resolveShowdown(state) {
-  var inHand = state.players.filter(function (p) { return p.status !== "folded" && p.status !== "out"; });
-  state.log.unshift("--- 쇼다운 ---");
-  var results = {};
-  inHand.forEach(function (p) { results[p.id] = best7(p.cards.concat(state.community)); });
-
-  var pots = buildSidePots(state);
+function resolveShowdown(st) {
+  var inHand = inHandPlayers(st);
+  st.log.unshift("--- 쇼다운 ---");
+  var res = {};
+  inHand.forEach(function (p) { res[p.id] = best7(p.cards.concat(st.community)); });
+  var pots = buildSidePots(st);
   pots.forEach(function (pot, idx) {
-    var eligible = pot.eligiblePlayerIds.filter(function (id) { return results[id]; });
-    if (eligible.length === 0) return;
-    var bestScore = null;
-    eligible.forEach(function (id) {
-      if (!bestScore || cmpScore(results[id].score, bestScore) > 0) bestScore = results[id].score;
-    });
-    var winners = eligible.filter(function (id) { return cmpScore(results[id].score, bestScore) === 0; });
+    var elig = pot.eligiblePlayerIds.filter(function (id) { return res[id]; });
+    if (!elig.length) return;
+    var bs = null;
+    elig.forEach(function (id) { if (!bs || cmpScore(res[id].score, bs) > 0) bs = res[id].score; });
+    var winners = elig.filter(function (id) { return cmpScore(res[id].score, bs) === 0; });
     var share = Math.floor(pot.amount / winners.length);
-    var remainder = pot.amount - share * winners.length;
-    winners.forEach(function (id, i) {
-      var pl = findById(state, id);
-      pl.stack += share + (i < remainder ? 1 : 0);
-    });
-    var potLabel = pots.length > 1 ? ("사이드팟" + (idx + 1)) : "팟";
-    var winnerNames = winners.map(function (id) { return findById(state, id).name; }).join(", ");
-    state.log.unshift(potLabel + " " + pot.amount.toLocaleString() + " → " + winnerNames + " (" + HAND_NAMES[bestScore[0]] + ")");
+    var rem = pot.amount - share * winners.length;
+    winners.forEach(function (id, i) { findById(st, id).stack += share + (i < rem ? 1 : 0); });
+    var label = pots.length > 1 ? ("사이드팟" + (idx + 1)) : "팟";
+    var names = winners.map(function (id) { return findById(st, id).name; }).join(", ");
+    st.log.unshift(label + " " + pot.amount.toLocaleString() + " → " + names + " (" + HAND_NAMES[bs[0]] + ")");
   });
-
-  state.revealCards = true;
+  st.revealCards = true;
   inHand.forEach(function (p) {
-    var r = results[p.id];
-    var cardsTxt = p.cards.map(function (c) { return rankLabel(c[0]) + SUIT_GLYPH[c[1]]; }).join(" ");
-    state.log.unshift(p.name + ": " + cardsTxt + " — " + HAND_NAMES[r.score[0]]);
+    var txt = p.cards.map(function (c) { return rankLabel(c[0]) + SUIT_GLYPH[c[1]]; }).join(" ");
+    st.log.unshift(p.name + ": " + txt + " — " + HAND_NAMES[res[p.id].score[0]]);
   });
-
-  endHandCleanup(state);
+  endHandCleanup(st);
 }
-
-function awardUncontested(state) {
-  var winner = null;
-  for (var k = 0; k < state.players.length; k++) {
-    var p = state.players[k];
-    if (p.status === "active" || p.status === "allin") { winner = p; break; }
-  }
-  var total = state.players.reduce(function (s, p) { return s + p.totalBetThisHand; }, 0);
-  winner.stack += total;
-  state.log.unshift(winner.name + "님이 " + total.toLocaleString() + " 획득 (모두 폴드)");
-  state.revealCards = false;
-  endHandCleanup(state);
+function awardUncontested(st) {
+  var w = inHandPlayers(st)[0];
+  var total = st.players.reduce(function (s, p) { return s + p.totalBetThisHand; }, 0);
+  if (w) { w.stack += total; st.log.unshift(w.name + "님이 " + total.toLocaleString() + " 획득 (모두 폴드)"); }
+  st.revealCards = false;
+  endHandCleanup(st);
 }
-
-function endHandCleanup(state) {
-  state.players.forEach(function (p) {
-    if (p.stack <= 0 && p.status !== "out") {
+function endHandCleanup(st) {
+  st.players.forEach(function (p) {
+    if (p.stack <= 0 && p.status !== "out" && p.status !== "waiting") {
       p.status = "out";
-      p.finishRank = state.players.filter(function (x) { return x.status !== "out"; }).length + 1;
-      state.log.unshift(p.name + "님 칩 소진 — " + p.finishRank + "위로 탈락");
+      p.finishRank = st.players.filter(function (x) { return x.status !== "out"; }).length + 1;
+      st.log.unshift(p.name + "님 칩 소진 — " + p.finishRank + "위로 탈락");
     }
   });
-  var remaining = state.players.filter(function (p) { return p.status !== "out"; });
-  state.stage = "handover";
-  state.currentTurnId = null;
-  if (remaining.length <= 1) {
-    state.stage = "gameover";
-    if (remaining.length === 1) {
-      remaining[0].finishRank = 1;
-      state.log.unshift("🏆 " + remaining[0].name + "님 우승!");
-    }
+  var remain = st.players.filter(function (p) { return p.status !== "out"; });
+  st.stage = "handover";
+  setTurn(st, null);
+  if (remain.length <= 1) {
+    st.stage = "gameover";
+    if (remain.length === 1) { remain[0].finishRank = 1; st.log.unshift("🏆 " + remain[0].name + "님 우승!"); }
   }
 }
-
-function advanceState(state) {
-  var inHand = state.players.filter(function (p) { return p.status !== "folded" && p.status !== "out"; });
-  if (inHand.length <= 1) { awardUncontested(state); return state; }
-
-  if (!bettingRoundComplete(state)) {
-    var cur = findById(state, state.currentTurnId);
-    var nxt = nextSeat(state, cur ? cur.seat : -1, true);
-    state.currentTurnId = nxt ? nxt.id : null;
-    return state;
+function advanceState(st) {
+  if (inHandPlayers(st).length <= 1) { awardUncontested(st); return st; }
+  if (!bettingRoundComplete(st)) {
+    var cur = findById(st, st.currentTurnId);
+    var nxt = nextSeat(st, cur ? cur.seat : -1, { actableOnly: true });
+    setTurn(st, nxt ? nxt.id : null);
+    return st;
   }
-
   while (true) {
-    if (state.stage === "river") { resolveShowdown(state); return state; }
-    dealStreet(state);
-    resetRoundFlags(state);
-    var canAct = eligibleActors(state);
-    var inHandNow = state.players.filter(function (p) { return p.status !== "folded" && p.status !== "out"; });
-    if (inHandNow.length <= 1) { awardUncontested(state); return state; }
-    if (canAct.length >= 2) {
-      var dealerP = findBySeat(state, state.dealerSeat);
-      var first = nextSeat(state, dealerP.seat, true);
-      state.currentTurnId = first ? first.id : null;
-      return state;
+    if (st.stage === "river") { resolveShowdown(st); return st; }
+    dealStreet(st);
+    resetRoundFlags(st);
+    if (inHandPlayers(st).length <= 1) { awardUncontested(st); return st; }
+    if (eligibleActors(st).length >= 2) {
+      var first = nextSeat(st, st.dealerSeat, { actableOnly: true });
+      setTurn(st, first ? first.id : null);
+      return st;
     }
   }
 }
 
-function startHand(state) {
-  var players = state.players.filter(function (p) { return p.status !== "out"; });
-  if (players.length < 2) { state.stage = "gameover"; return state; }
+/* [2] 딜러/SB/BB 시계방향 로테이션 + [4] waiting 플레이어 참가 */
+function startHand(st) {
+  st.players.forEach(function (p) { if (p.status === "waiting" && p.stack > 0) p.status = "active"; });
 
-  var lvl = currentLevelIdx(state.tournamentStartAt);
-  var blinds = blindsForLevel(lvl);
-  var levelChanged = state.level !== undefined && state.level !== lvl && state.handNumber > 0;
-  state.level = lvl;
-  state.sb = blinds.sb;
-  state.bb = blinds.bb;
+  var alive = st.players.filter(function (p) { return p.status !== "out"; });
+  if (alive.length < 2) { st.stage = "gameover"; return st; }
 
-  state.handNumber = (state.handNumber || 0) + 1;
-  state.community = [];
-  state.deck = freshDeck();
-  var header = "====== 핸드 #" + state.handNumber + " (L" + (lvl + 1) + ": " + blinds.sb.toLocaleString() + "/" + blinds.bb.toLocaleString() + ") ======";
-  var newLog = [header].concat(state.log || []);
-  if (levelChanged) newLog.unshift("📈 블라인드 상승! 레벨 " + (lvl + 1) + ": " + blinds.sb.toLocaleString() + " / " + blinds.bb.toLocaleString());
-  state.log = newLog.slice(0, 60);
-  state.revealCards = false;
+  var lvl = currentLevelIdx(st.tournamentStartAt);
+  var bl = blindsForLevel(lvl);
+  var levelChanged = st.handNumber > 0 && st.level !== lvl;
+  st.level = lvl; st.sb = bl.sb; st.bb = bl.bb;
 
-  var dealer = nextSeat(state, state.dealerSeat === undefined ? -1 : state.dealerSeat, false);
-  if (!dealer) dealer = players[0];
-  state.dealerSeat = dealer.seat;
+  st.handNumber = (st.handNumber || 0) + 1;
+  st.community = [];
+  st.deck = freshDeck();
+  st.revealCards = false;
 
-  state.players.forEach(function (p) {
-    p.cards = [];
-    p.betThisRound = 0;
-    p.totalBetThisHand = 0;
-    p.hasActed = false;
+  var lg = ["====== 핸드 #" + st.handNumber + " (L" + (lvl+1) + ": " + bl.sb.toLocaleString() + "/" + bl.bb.toLocaleString() + ") ======"].concat(st.log || []);
+  if (levelChanged) lg.unshift("📈 블라인드 상승! 레벨 " + (lvl+1) + ": " + bl.sb.toLocaleString() + " / " + bl.bb.toLocaleString());
+  st.log = lg.slice(0, 60);
+
+  st.players.forEach(function (p) {
+    p.cards = []; p.betThisRound = 0; p.totalBetThisHand = 0; p.hasActed = false;
     if (p.status !== "out") p.status = "active";
   });
 
-  var order = [];
-  var s = dealer.seat;
-  var n = state.players.length;
+  /* 딜러 버튼 시계방향 한 칸 이동 (탈락자 건너뜀) */
+  var prev = (st.dealerSeat === undefined || st.dealerSeat === null) ? -1 : st.dealerSeat;
+  var dealer = nextSeat(st, prev, {});
+  if (!dealer) dealer = alive[0];
+  st.dealerSeat = dealer.seat;
+
+  /* 딜러 다음부터 시계방향 순서 */
+  var order = [], s = dealer.seat, n = st.players.length;
   for (var i = 0; i < n; i++) {
     s = (s + 1) % n;
-    var p = findBySeat(state, s);
+    var p = findBySeat(st, s);
     if (p && p.status !== "out") order.push(p);
   }
 
   function post(p, amt) {
     var real = Math.min(amt, p.stack);
-    p.stack -= real;
-    p.betThisRound = real;
-    p.totalBetThisHand = real;
+    p.stack -= real; p.betThisRound = real; p.totalBetThisHand = real;
     if (p.stack === 0) p.status = "allin";
   }
 
+  var sbP, bbP, firstToAct;
   if (order.length === 2) {
-    post(order[0], blinds.sb);
-    post(order[1], blinds.bb);
-    state.dealerSeat = order[0].seat;
+    /* 헤즈업: 딜러=SB, 프리플롭 선행동 = 딜러 */
+    sbP = dealer; bbP = order[0]; firstToAct = dealer;
   } else {
-    post(order[0], blinds.sb);
-    post(order[1], blinds.bb);
+    sbP = order[0]; bbP = order[1]; firstToAct = order[2];
   }
 
-  order.forEach(function (p) { p.cards = [state.deck.pop(), state.deck.pop()]; });
+  post(sbP, bl.sb);
+  post(bbP, bl.bb);
+  st.sbSeat = sbP.seat;
+  st.bbSeat = bbP.seat;
 
-  state.currentBet = blinds.bb;
-  state.minRaise = blinds.bb;
-  state.lastAggressorId = order[1] ? order[1].id : null;
-  state.stage = "preflop";
+  order.forEach(function (p) { p.cards = [st.deck.pop(), st.deck.pop()]; });
 
-  var firstToAct = order.length === 2 ? order[0] : (order[2] || order[0]);
-  state.currentTurnId = firstToAct.status === "active" ? firstToAct.id : null;
-  if (!state.currentTurnId) advanceState(state);
-  return state;
+  st.currentBet = bl.bb;
+  st.minRaise = bl.bb;
+  st.lastAggressorId = bbP.id;
+  st.stage = "preflop";
+
+  if (firstToAct && firstToAct.status === "active") setTurn(st, firstToAct.id);
+  else { setTurn(st, null); advanceState(st); }
+  return st;
 }
 
-function normalizeRoom(data) {
-  if (!data) return null;
+function normalizeRoom(d) {
+  if (!d) return null;
   return {
-    stage: data.stage || "lobby",
-    players: (data.players || []).map(function (p) {
+    stage: d.stage || "lobby",
+    players: (d.players || []).map(function (p) {
       return {
         id: p.id, name: p.name, stack: p.stack, seat: p.seat,
         status: p.status || "waiting",
@@ -468,161 +393,186 @@ function normalizeRoom(data) {
         finishRank: p.finishRank || null
       };
     }),
-    community: data.community || [],
-    deck: data.deck || [],
-    log: data.log || [],
-    handNumber: data.handNumber || 0,
-    dealerSeat: data.dealerSeat === undefined ? -1 : data.dealerSeat,
-    currentBet: data.currentBet || 0,
-    minRaise: data.minRaise || 200,
-    currentTurnId: data.currentTurnId || null,
-    lastAggressorId: data.lastAggressorId || null,
-    revealCards: !!data.revealCards,
-    tournamentStartAt: data.tournamentStartAt || null,
-    level: data.level === undefined ? 0 : data.level,
-    sb: data.sb || 100,
-    bb: data.bb || 200
+    community: d.community || [], deck: d.deck || [], log: d.log || [],
+    handNumber: d.handNumber || 0,
+    dealerSeat: d.dealerSeat === undefined ? -1 : d.dealerSeat,
+    sbSeat: d.sbSeat === undefined ? -1 : d.sbSeat,
+    bbSeat: d.bbSeat === undefined ? -1 : d.bbSeat,
+    currentBet: d.currentBet || 0, minRaise: d.minRaise || 200,
+    currentTurnId: d.currentTurnId || null,
+    turnDeadline: d.turnDeadline || null,
+    lastAggressorId: d.lastAggressorId || null,
+    revealCards: !!d.revealCards,
+    tournamentStartAt: d.tournamentStartAt || null,
+    level: d.level === undefined ? 0 : d.level,
+    sb: d.sb || 100, bb: d.bb || 200
   };
 }
-
 function emptyRoom() {
   return {
     stage: "lobby", players: [], community: [], deck: [], log: [],
-    handNumber: 0, dealerSeat: -1, currentBet: 0, minRaise: 200,
-    currentTurnId: null, lastAggressorId: null, revealCards: false,
-    tournamentStartAt: null, level: 0, sb: 100, bb: 200
+    handNumber: 0, dealerSeat: -1, sbSeat: -1, bbSeat: -1,
+    currentBet: 0, minRaise: 200, currentTurnId: null, turnDeadline: null,
+    lastAggressorId: null, revealCards: false, tournamentStartAt: null,
+    level: 0, sb: 100, bb: 200
   };
 }
 
+function applyAction(cur, pid, type, amount) {
+  var p = findById(cur, pid);
+  if (!p || p.status !== "active") return null;
+
+  if (type === "fold") {
+    p.status = "folded"; p.hasActed = true;
+    cur.log.unshift(p.name + ": 폴드");
+  } else if (type === "check") {
+    if (p.betThisRound !== cur.currentBet) return null;
+    p.hasActed = true;
+    cur.log.unshift(p.name + ": 체크");
+  } else if (type === "call") {
+    var toCall = Math.min(cur.currentBet - p.betThisRound, p.stack);
+    p.stack -= toCall; p.betThisRound += toCall; p.totalBetThisHand += toCall;
+    p.hasActed = true;
+    if (p.stack === 0) p.status = "allin";
+    cur.log.unshift(p.name + ": 콜 (" + p.betThisRound.toLocaleString() + ")");
+  } else if (type === "raise" || type === "allin") {
+    var target = (type === "allin") ? (p.betThisRound + p.stack) : amount;
+    target = Math.min(target, p.betThisRound + p.stack);
+    var raiseSize = target - cur.currentBet;
+    var add = target - p.betThisRound;
+    if (add <= 0) return null;
+    p.stack -= add; p.betThisRound = target; p.totalBetThisHand += add;
+    p.hasActed = true;
+    if (p.stack === 0) p.status = "allin";
+    var isRaise = target > cur.currentBet;
+    if (isRaise) {
+      cur.minRaise = Math.max(raiseSize, cur.minRaise);
+      cur.currentBet = target;
+      cur.lastAggressorId = p.id;
+      cur.players.forEach(function (o) { if (o.id !== p.id && o.status === "active") o.hasActed = false; });
+    }
+    cur.log.unshift(p.name + ": " + (p.status === "allin" ? "올인" : (isRaise ? "레이즈" : "콜")) + " (" + target.toLocaleString() + ")");
+  } else return null;
+
+  cur.log = cur.log.slice(0, 60);
+  return advanceState(cur);
+}
+
 function App() {
-  var meState = useState(null); var me = meState[0], setMe = meState[1];
-  var nameState = useState(""); var nameInput = nameState[0], setNameInput = nameState[1];
-  var roomState = useState(null); var room = roomState[0], setRoom = roomState[1];
-  var raiseState = useState(""); var raiseInput = raiseState[0], setRaiseInput = raiseState[1];
-  var loadState = useState(true); var loading = loadState[0], setLoading = loadState[1];
-  var errState = useState(null); var connError = errState[0], setConnError = errState[1];
-  var tickState = useState(0); var setTick = tickState[1];
+  var a = useState(null); var me = a[0], setMe = a[1];
+  var b = useState(""); var nameInput = b[0], setNameInput = b[1];
+  var c = useState(null); var room = c[0], setRoom = c[1];
+  var d = useState(""); var raiseInput = d[0], setRaiseInput = d[1];
+  var e = useState(true); var loading = e[0], setLoading = e[1];
+  var f = useState(null); var connError = f[0], setConnError = f[1];
+  var g = useState(0); var setTick = g[1];
+  var autoRef = useRef("");
+  var roomRef = useRef(null), meRef = useRef(null);
+  roomRef.current = room; meRef.current = me;
 
   useEffect(function () {
     var saved = localStorage.getItem(ID_KEY);
-    if (saved) { try { setMe(JSON.parse(saved)); } catch (e) {} }
+    if (saved) { try { setMe(JSON.parse(saved)); } catch (x) {} }
     if (!db) { setLoading(false); return; }
-
     var ref = db.ref(ROOM_PATH);
-    var listener = ref.on("value", function (snap) {
-      setRoom(normalizeRoom(snap.val()));
-      setLoading(false);
-      setConnError(null);
+    var lis = ref.on("value", function (snap) {
+      setRoom(normalizeRoom(snap.val())); setLoading(false); setConnError(null);
     }, function (err) {
-      setLoading(false);
-      setConnError("데이터베이스 접근 오류: " + (err.message || err));
+      setLoading(false); setConnError("데이터베이스 접근 오류: " + (err.message || err));
     });
-    var tick = setInterval(function () { setTick(function (t) { return t + 1; }); }, 1000);
-    return function () { ref.off("value", listener); clearInterval(tick); };
+    var tk = setInterval(function () { setTick(function (t) { return t + 1; }); checkTurnTimeout(); }, 500);
+    return function () { ref.off("value", lis); clearInterval(tk); };
   }, []);
 
   function freshRoomRead() {
-    return db.ref(ROOM_PATH).get().then(function (snap) { return normalizeRoom(snap.val()); });
+    return db.ref(ROOM_PATH).get().then(function (s) { return normalizeRoom(s.val()); });
+  }
+  function saveRoom(next) {
+    return db.ref(ROOM_PATH).set(next).catch(function (err) { setConnError("저장 실패: " + (err.message || err)); });
   }
 
-  function saveRoom(next) {
-    return db.ref(ROOM_PATH).set(next).catch(function (err) {
-      setConnError("저장 실패: " + (err.message || err));
+  /* [3] 시간 초과 자동 처리. 본인 차례면 즉시, 타인 차례면 3초 여유 후 대신 처리 */
+  function checkTurnTimeout() {
+    var r = roomRef.current, m = meRef.current;
+    if (!r || !m || !db) return;
+    if (!r.currentTurnId || !r.turnDeadline) return;
+    if (r.stage === "lobby" || r.stage === "handover" || r.stage === "gameover") return;
+
+    var grace = (r.currentTurnId === m.id) ? 0 : 3000;
+    if (Date.now() < r.turnDeadline + grace) return;
+
+    var key = r.currentTurnId + "@" + r.turnDeadline;
+    if (autoRef.current === key) return;
+    autoRef.current = key;
+
+    freshRoomRead().then(function (cu) {
+      if (!cu || cu.currentTurnId !== r.currentTurnId || cu.turnDeadline !== r.turnDeadline) return;
+      if (Date.now() < cu.turnDeadline) return;
+      var p = findById(cu, cu.currentTurnId);
+      if (!p || p.status !== "active") return;
+      var canCheck = p.betThisRound === cu.currentBet;
+      cu.log.unshift("⏰ " + p.name + " 시간 초과");
+      var nx = applyAction(cu, p.id, canCheck ? "check" : "fold");
+      if (nx) return saveRoom(nx);
     });
   }
 
+  /* [4] 레이트 레지스트레이션 */
   function joinTable() {
-    var trimmed = nameInput.trim();
-    if (!trimmed) return;
-    freshRoomRead().then(function (current) {
-      current = current || emptyRoom();
-      if (current.stage !== "lobby") { alert("이미 토너먼트가 시작되었습니다."); return; }
-      if (current.players.length >= MAX_PLAYERS) { alert("정원(" + MAX_PLAYERS + "명)이 가득 찼습니다."); return; }
-      if (current.players.some(function (p) { return p.name === trimmed; })) {
-        alert("이미 사용 중인 이름입니다."); return;
-      }
+    var nm = nameInput.trim();
+    if (!nm) return;
+    freshRoomRead().then(function (cur) {
+      cur = cur || emptyRoom();
+      var lvl = cur.tournamentStartAt ? currentLevelIdx(cur.tournamentStartAt) : 0;
+      var canJoin = (cur.stage === "lobby") || (cur.stage !== "gameover" && lvl < LATE_REG_UNTIL_LEVEL);
+      if (!canJoin) { alert("레이트 레지스트레이션이 마감되었습니다 (레벨 2 시작)."); return; }
+      if (cur.players.length >= MAX_PLAYERS) { alert("정원(" + MAX_PLAYERS + "명)이 가득 찼습니다."); return; }
+      if (cur.players.some(function (p) { return p.name === nm; })) { alert("이미 사용 중인 이름입니다."); return; }
+
       var id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ("id-" + Math.random().toString(36).slice(2) + Date.now());
-      var identity = { id: id, name: trimmed };
-      localStorage.setItem(ID_KEY, JSON.stringify(identity));
-      setMe(identity);
-      current.players.push({
-        id: id, name: trimmed, stack: STARTING_STACK, seat: current.players.length,
+      localStorage.setItem(ID_KEY, JSON.stringify({ id: id, name: nm }));
+      setMe({ id: id, name: nm });
+
+      var midGame = cur.stage !== "lobby";
+      cur.players.push({
+        id: id, name: nm, stack: STARTING_STACK, seat: cur.players.length,
         status: "waiting", cards: [], betThisRound: 0, totalBetThisHand: 0,
         hasActed: false, finishRank: null
       });
-      return saveRoom(current);
+      if (midGame) cur.log.unshift("🪑 " + nm + "님 중간 참여 (다음 핸드부터)");
+      return saveRoom(cur);
     });
   }
 
   function hostStartGame() {
-    freshRoomRead().then(function (current) {
-      if (!current || current.players.length < 2) return;
-      current.players.forEach(function (p) { p.status = "active"; });
-      current.tournamentStartAt = Date.now();
-      current = startHand(current);
-      return saveRoom(current);
+    freshRoomRead().then(function (cur) {
+      if (!cur || cur.players.length < 2) return;
+      cur.tournamentStartAt = Date.now();
+      cur.handNumber = 0;
+      cur.dealerSeat = -1;
+      cur = startHand(cur);
+      return saveRoom(cur);
     });
   }
-
   function startNextHand() {
-    freshRoomRead().then(function (current) {
-      if (!current || current.stage !== "handover") return;
-      current = startHand(current);
-      return saveRoom(current);
+    freshRoomRead().then(function (cur) {
+      if (!cur || cur.stage !== "handover") return;
+      cur = startHand(cur);
+      return saveRoom(cur);
     });
   }
-
   function resetTable() {
     if (!confirm("정말 테이블을 초기화할까요? 모든 진행 상황이 사라집니다.")) return;
     saveRoom(emptyRoom()).then(function () {
-      localStorage.removeItem(ID_KEY);
-      setMe(null);
+      localStorage.removeItem(ID_KEY); setMe(null); setNameInput("");
     });
   }
-
   function doAction(type, amount) {
-    freshRoomRead().then(function (current) {
-      if (!current || current.currentTurnId !== me.id) return;
-      var p = findById(current, me.id);
-      if (!p || p.status !== "active") return;
-
-      if (type === "fold") {
-        p.status = "folded"; p.hasActed = true;
-        current.log.unshift(p.name + ": 폴드");
-      } else if (type === "check") {
-        if (p.betThisRound !== current.currentBet) return;
-        p.hasActed = true;
-        current.log.unshift(p.name + ": 체크");
-      } else if (type === "call") {
-        var toCall = Math.min(current.currentBet - p.betThisRound, p.stack);
-        p.stack -= toCall; p.betThisRound += toCall; p.totalBetThisHand += toCall;
-        p.hasActed = true;
-        if (p.stack === 0) p.status = "allin";
-        current.log.unshift(p.name + ": 콜 (" + p.betThisRound.toLocaleString() + ")");
-      } else if (type === "raise" || type === "allin") {
-        var targetTotal = type === "allin" ? (p.betThisRound + p.stack) : amount;
-        targetTotal = Math.min(targetTotal, p.betThisRound + p.stack);
-        var raiseSize = targetTotal - current.currentBet;
-        var addAmount = targetTotal - p.betThisRound;
-        if (addAmount <= 0) return;
-        p.stack -= addAmount; p.betThisRound = targetTotal; p.totalBetThisHand += addAmount;
-        p.hasActed = true;
-        if (p.stack === 0) p.status = "allin";
-        var isRaise = targetTotal > current.currentBet;
-        if (isRaise) {
-          current.minRaise = Math.max(raiseSize, current.minRaise);
-          current.currentBet = targetTotal;
-          current.lastAggressorId = p.id;
-          current.players.forEach(function (other) {
-            if (other.id !== p.id && other.status === "active") other.hasActed = false;
-          });
-        }
-        current.log.unshift(p.name + ": " + (p.status === "allin" ? "올인" : (isRaise ? "레이즈" : "콜")) + " (" + targetTotal.toLocaleString() + ")");
-      }
-
-      current = advanceState(current);
+    freshRoomRead().then(function (cur) {
+      if (!cur || !me || cur.currentTurnId !== me.id) return;
+      var nx = applyAction(cur, me.id, type, amount);
       setRaiseInput("");
-      return saveRoom(current);
+      if (nx) return saveRoom(nx);
     });
   }
 
@@ -630,17 +580,14 @@ function App() {
 
   if (connError) {
     return (
-      <div style={S.wrap}>
-        <div style={S.center}>
-          <div style={S.logo}>⚠️ 연결 오류</div>
-          <p style={S.subtle}>{connError}</p>
-          <p style={S.tiny}>Firebase 콘솔 &gt; Realtime Database &gt; 규칙 탭에서 아래처럼 설정 후 "게시":</p>
-          <pre style={{ background: "#1a1d19", padding: 12, borderRadius: 8, fontSize: 12, textAlign: "left", color: "#f3e3a3" }}>{'{\n  "rules": {\n    ".read": true,\n    ".write": true\n  }\n}'}</pre>
-        </div>
-      </div>
+      <div style={S.wrap}><div style={S.center}>
+        <div style={S.logo}>⚠️ 연결 오류</div>
+        <p style={S.subtle}>{connError}</p>
+        <p style={S.tiny}>Firebase 콘솔 &gt; Realtime Database &gt; 규칙 에서 아래처럼 설정 후 "게시":</p>
+        <pre style={S.pre}>{'{\n  "rules": {\n    ".read": true,\n    ".write": true\n  }\n}'}</pre>
+      </div></div>
     );
   }
-
   if (loading) return <div style={S.wrap}><div style={S.center}>불러오는 중…</div></div>;
 
   var r = room || emptyRoom();
@@ -650,104 +597,127 @@ function App() {
   var liveBlinds = blindsForLevel(liveLvl);
   var nextBlinds = blindsForLevel(liveLvl + 1);
   var remain = r.tournamentStartAt ? secsToNextLevel(r.tournamentStartAt) : LEVEL_SECONDS;
-  var mm = String(Math.floor(remain / 60)); while (mm.length < 2) mm = "0" + mm;
-  var ss = String(remain % 60); while (ss.length < 2) ss = "0" + ss;
+  var lateRegOpen = (r.stage !== "lobby" && r.stage !== "gameover" && liveLvl < LATE_REG_UNTIL_LEVEL);
 
-  if (!me) {
+  /* 입장 화면 */
+  if (!meP) {
+    var joinable = (r.stage === "lobby") || lateRegOpen;
     return (
-      <div style={S.wrap}>
-        <div style={S.center}>
-          <div style={S.logo}>♠ NL 홀덤 토너먼트 ♣</div>
-          <p style={S.subtle}>닉네임을 입력하고 테이블에 앉으세요</p>
-          <input style={S.input} placeholder="닉네임" value={nameInput} maxLength={10}
-            onChange={function (e) { setNameInput(e.target.value); }}
-            onKeyDown={function (e) { if (e.key === "Enter") joinTable(); }} />
-          <button style={S.btnGold} onClick={joinTable}>테이블 입장</button>
-          <p style={S.tiny}>시작 칩 {STARTING_STACK.toLocaleString()} · 최대 {MAX_PLAYERS}명 · 레벨당 5분</p>
-          <p style={S.tiny}>블라인드 100/200 시작, 5레벨마다 ×10</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (r.stage === "lobby" || !meP) {
-    var myEntry = findById(r, me.id);
-    return (
-      <div style={S.wrap}>
-        <div style={S.center}>
-          <div style={S.logo}>♠ NL 홀덤 토너먼트 ♣</div>
-          <p style={S.subtle}>{me.name}님, 대기 중입니다…</p>
-          <div style={S.lobbyList}>
-            {r.players.map(function (p) {
-              return <div key={p.id} style={S.lobbyRow}><span>{p.name}</span><span style={S.tiny}>{p.stack.toLocaleString()}</span></div>;
-            })}
-            {r.players.length === 0 && <div style={S.tiny}>아직 아무도 없습니다</div>}
-          </div>
-          {myEntry ? (
-            <React.Fragment>
-              <button style={Object.assign({}, S.btnGold, { opacity: r.players.length >= 2 ? 1 : 0.4 })}
-                disabled={r.players.length < 2} onClick={hostStartGame}>
-                토너먼트 시작 ({r.players.length}/{MAX_PLAYERS}명)
-              </button>
-              <p style={S.tiny}>시작 버튼을 누르는 순간 블라인드 타이머가 돌아갑니다</p>
-            </React.Fragment>
-          ) : (
-            <button style={S.btnGold} onClick={joinTable}>{me.name} 으로 재입장</button>
-          )}
-          <button style={S.btnGhost} onClick={resetTable}>테이블 초기화</button>
-          <div style={Object.assign({}, S.lobbyList, { marginTop: 16 })}>
-            <div style={Object.assign({}, S.tiny, { marginBottom: 6, marginTop: 0 })}>블라인드 스케줄 (레벨당 5분)</div>
-            {[0,1,2,3,4,5,6,7,8,9].map(function (i) {
-              var b = blindsForLevel(i);
-              return <div key={i} style={S.lobbyRow}><span style={S.tiny}>L{i + 1}</span><span style={S.tiny}>{b.sb.toLocaleString()} / {b.bb.toLocaleString()}</span></div>;
-            })}
-            <div style={S.lobbyRow}><span style={S.tiny}>…</span><span style={S.tiny}>이후 계속 ×10</span></div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (r.stage === "gameover") {
-    var ranked = r.players.slice().sort(function (a, b) { return (a.finishRank || 99) - (b.finishRank || 99); });
-    return (
-      <div style={S.wrap}>
-        <div style={S.center}>
-          <div style={S.logo}>🏆 토너먼트 종료</div>
-          <p style={Object.assign({}, S.subtle, { fontSize: 22 })}>
-            {ranked[0] ? ranked[0].name + "님 우승!" : "게임 종료"}
+      <div style={S.wrap}><div style={S.center}>
+        <div style={S.logo}>♠ NL 홀덤 토너먼트 ♣</div>
+        {joinable ? (
+          <React.Fragment>
+            <p style={S.subtle}>{r.stage === "lobby" ? "닉네임을 입력하고 테이블에 앉으세요" : "🪑 레이트 레지스트레이션 진행 중"}</p>
+            <input style={S.input} placeholder="닉네임" value={nameInput} maxLength={10}
+              onChange={function (ev) { setNameInput(ev.target.value); }}
+              onKeyDown={function (ev) { if (ev.key === "Enter") joinTable(); }} />
+            <button style={S.btnGold} onClick={joinTable}>테이블 입장</button>
+            {r.stage !== "lobby" && <p style={S.tiny}>레벨 2 시작 전까지 참여 가능 · 다음 핸드부터 플레이</p>}
+          </React.Fragment>
+        ) : (
+          <p style={S.subtle}>
+            {r.stage === "gameover" ? "토너먼트가 종료되었습니다." : "레이트 레지스트레이션 마감 (레벨 2 시작)"}
           </p>
-          <div style={S.lobbyList}>
-            {ranked.map(function (p) {
-              return (
-                <div key={p.id} style={S.lobbyRow}>
-                  <span>{(p.finishRank ? p.finishRank + "위 " : "- ") + p.name}</span>
-                  <span style={S.tiny}>{p.stack.toLocaleString()}</span>
-                </div>
-              );
-            })}
-          </div>
-          <button style={S.btnGold} onClick={resetTable}>새 토너먼트</button>
+        )}
+        <p style={S.tiny}>시작칩 {STARTING_STACK.toLocaleString()} · 최대 {MAX_PLAYERS}명 · 레벨 5분 · 액션 {TURN_SECONDS}초</p>
+        <div style={S.scheduleBox}>
+          <div style={S.scheduleTitle}>블라인드 스케줄</div>
+          {[0,1,2,3,4,5,6,7,8,9].map(function (i) {
+            var bb = blindsForLevel(i);
+            var hot = (r.tournamentStartAt && i === liveLvl);
+            return (
+              <div key={i} style={Object.assign({}, S.lobbyRow, hot ? { color: "#f3e3a3" } : {})}>
+                <span style={S.tiny}>L{i+1}</span>
+                <span style={S.tiny}>{bb.sb.toLocaleString()} / {bb.bb.toLocaleString()}</span>
+              </div>
+            );
+          })}
+          <div style={S.lobbyRow}><span style={S.tiny}>…</span><span style={S.tiny}>이후 계속 ×10</span></div>
         </div>
-      </div>
+        <button style={S.btnGhost} onClick={resetTable}>테이블 초기화</button>
+      </div></div>
     );
   }
 
+  /* 로비 */
+  if (r.stage === "lobby") {
+    return (
+      <div style={S.wrap}><div style={S.center}>
+        <div style={S.logo}>♠ NL 홀덤 토너먼트 ♣</div>
+        <p style={S.subtle}>{me.name}님, 대기 중입니다…</p>
+        <div style={S.lobbyList}>
+          {r.players.map(function (p) {
+            return <div key={p.id} style={S.lobbyRow}><span>{p.name}</span><span style={S.tiny}>{p.stack.toLocaleString()}</span></div>;
+          })}
+        </div>
+        <button style={Object.assign({}, S.btnGold, { opacity: r.players.length >= 2 ? 1 : 0.4 })}
+          disabled={r.players.length < 2} onClick={hostStartGame}>
+          토너먼트 시작 ({r.players.length}/{MAX_PLAYERS}명)
+        </button>
+        <p style={S.tiny}>시작 후 레벨 1 동안은 중간 참여가 가능합니다</p>
+        <button style={S.btnGhost} onClick={resetTable}>테이블 초기화</button>
+      </div></div>
+    );
+  }
+
+  /* 종료 */
+  if (r.stage === "gameover") {
+    var ranked = r.players.slice().sort(function (x, y) { return (x.finishRank || 99) - (y.finishRank || 99); });
+    return (
+      <div style={S.wrap}><div style={S.center}>
+        <div style={S.logo}>🏆 토너먼트 종료</div>
+        <p style={Object.assign({}, S.subtle, { fontSize: 22 })}>{ranked[0] ? ranked[0].name + "님 우승!" : "게임 종료"}</p>
+        <div style={S.lobbyList}>
+          {ranked.map(function (p) {
+            return (
+              <div key={p.id} style={S.lobbyRow}>
+                <span>{(p.finishRank ? p.finishRank + "위 " : "- ") + p.name}</span>
+                <span style={S.tiny}>{p.stack.toLocaleString()}</span>
+              </div>
+            );
+          })}
+        </div>
+        <button style={S.btnGold} onClick={resetTable}>새 토너먼트</button>
+      </div></div>
+    );
+  }
+
+  /* 테이블 */
   var isMyTurn = r.currentTurnId === me.id && meP.status === "active";
   var toCall = Math.max(0, (r.currentBet || 0) - (meP.betThisRound || 0));
   var canCheck = toCall === 0;
   var minRaiseTotal = (r.currentBet || 0) + (r.minRaise || r.bb);
+  var myMax = meP.betThisRound + meP.stack;
   var pot = r.players.reduce(function (s, p) { return s + (p.totalBetThisHand || 0); }, 0);
   var aliveCount = r.players.filter(function (p) { return p.status !== "out"; }).length;
+  var turnLeft = r.turnDeadline ? Math.max(0, Math.ceil((r.turnDeadline - Date.now()) / 1000)) : 0;
 
-  var seatsOrdered = r.players.slice().sort(function (a, b) { return a.seat - b.seat; });
-  var myIndex = -1;
-  for (var mi = 0; mi < seatsOrdered.length; mi++) if (seatsOrdered[mi].id === me.id) { myIndex = mi; break; }
-  var rotated = myIndex >= 0 ? seatsOrdered.slice(myIndex).concat(seatsOrdered.slice(0, myIndex)) : seatsOrdered;
+  var seats = r.players.slice().sort(function (x, y) { return x.seat - y.seat; });
+  var mi = 0;
+  for (var k = 0; k < seats.length; k++) if (seats[k].id === me.id) { mi = k; break; }
+  var rotated = seats.slice(mi).concat(seats.slice(0, mi));
   var others = rotated.filter(function (p) { return p.id !== me.id; });
 
   var levelUpPending = liveLvl > r.level;
   var stageTxt = { preflop: "프리플롭", flop: "플랍", turn: "턴", river: "리버", handover: "핸드 종료" }[r.stage] || "";
+
+  /* [5] 팟 비율 베팅 */
+  function potBetTarget(pct) {
+    var potAfterCall = pot + toCall;
+    var raw = r.currentBet + potAfterCall * pct;
+    var rounded = Math.round(raw / 100) * 100;
+    return Math.min(Math.max(rounded, minRaiseTotal), myMax);
+  }
+  function potBtn(label, pct) {
+    var target = potBetTarget(pct);
+    var isAll = target >= myMax;
+    return (
+      <button key={label} style={S.btnPot} onClick={function () { doAction("raise", target); }}>
+        <span style={{ fontWeight: 700 }}>{label}</span>
+        <span style={S.btnPotSub}>{isAll ? "올인" : target.toLocaleString()}</span>
+      </button>
+    );
+  }
 
   return (
     <div style={S.tableWrap}>
@@ -763,18 +733,18 @@ function App() {
           <span style={S.levelBlind}> {r.sb.toLocaleString()} / {r.bb.toLocaleString()}</span>
         </div>
         <div style={S.levelTimer}>
-          다음 레벨까지 <span style={{ color: remain <= 30 ? "#d9534f" : "#f3e3a3", fontWeight: 700 }}>{mm}:{ss}</span>
+          다음 레벨 <span style={{ color: remain <= 30 ? "#d9534f" : "#f3e3a3", fontWeight: 700 }}>{pad2(Math.floor(remain/60))}:{pad2(remain%60)}</span>
         </div>
         <div style={S.tiny}>다음: {nextBlinds.sb.toLocaleString()} / {nextBlinds.bb.toLocaleString()}</div>
       </div>
-      {levelUpPending && (
-        <div style={S.levelUpNotice}>📈 레벨 상승! 다음 핸드부터 {liveBlinds.sb.toLocaleString()} / {liveBlinds.bb.toLocaleString()} 적용</div>
-      )}
+
+      {levelUpPending && <div style={S.levelUpNotice}>📈 레벨 상승! 다음 핸드부터 {liveBlinds.sb.toLocaleString()} / {liveBlinds.bb.toLocaleString()} 적용</div>}
+      {lateRegOpen && <div style={S.lateRegNotice}>🪑 레이트 레지스트레이션 열림 — 레벨 2 시작 전까지 참여 가능</div>}
 
       <div style={S.felt}>
         <div style={S.othersRow}>
           {others.map(function (p) {
-            return <PlayerChip key={p.id} p={p} isDealer={p.seat === r.dealerSeat} isTurn={r.currentTurnId === p.id} reveal={r.revealCards} />;
+            return <PlayerChip key={p.id} p={p} r={r} isTurn={r.currentTurnId === p.id} turnLeft={turnLeft} reveal={r.revealCards} />;
           })}
         </div>
 
@@ -788,30 +758,51 @@ function App() {
           <div style={S.stageLabel}>{stageTxt}</div>
         </div>
 
-        <PlayerChip p={meP} isDealer={meP.seat === r.dealerSeat} isTurn={isMyTurn} reveal={true} />
+        <PlayerChip p={meP} r={r} isTurn={isMyTurn} turnLeft={turnLeft} reveal={true} />
       </div>
 
       {r.stage === "handover" && (
-        <div style={S.handoverBar}>
-          <button style={S.btnGold} onClick={startNextHand}>다음 핸드 시작</button>
-        </div>
+        <div style={S.handoverBar}><button style={S.btnGold} onClick={startNextHand}>다음 핸드 시작</button></div>
       )}
 
       {isMyTurn && r.stage !== "handover" && (
-        <div style={S.actionBar}>
-          <button style={S.btnAction} onClick={function () { doAction("fold"); }}>폴드</button>
-          {canCheck ? (
-            <button style={S.btnAction} onClick={function () { doAction("check"); }}>체크</button>
-          ) : (
-            <button style={S.btnAction} onClick={function () { doAction("call"); }}>콜 {toCall.toLocaleString()}</button>
-          )}
-          <input style={S.raiseInput} type="number" placeholder={"레이즈 (최소 " + minRaiseTotal.toLocaleString() + ")"}
-            value={raiseInput} onChange={function (e) { setRaiseInput(e.target.value); }} />
-          <button style={S.btnAction} onClick={function () { doAction("raise", Math.max(Number(raiseInput) || 0, minRaiseTotal)); }}>레이즈</button>
-          <button style={S.btnAllin} onClick={function () { doAction("allin"); }}>올인</button>
+        <div style={S.actionZone}>
+          <div style={S.turnTimerBar}>
+            <div style={Object.assign({}, S.turnTimerFill, {
+              width: (turnLeft / TURN_SECONDS * 100) + "%",
+              background: turnLeft <= 3 ? "#d9534f" : "#d4af37"
+            })} />
+          </div>
+          <div style={Object.assign({}, S.turnTimerTxt, turnLeft <= 3 ? { color: "#d9534f", animation: "pulseRed 0.8s infinite" } : {})}>
+            남은 시간 {turnLeft}초
+          </div>
+
+          <div style={S.actionBar}>
+            <button style={S.btnAction} onClick={function () { doAction("fold"); }}>폴드</button>
+            {canCheck
+              ? <button style={S.btnAction} onClick={function () { doAction("check"); }}>체크</button>
+              : <button style={S.btnAction} onClick={function () { doAction("call"); }}>콜 {toCall.toLocaleString()}</button>}
+            <button style={S.btnAllin} onClick={function () { doAction("allin"); }}>올인 {myMax.toLocaleString()}</button>
+          </div>
+
+          <div style={S.potRow}>
+            {potBtn("25%", 0.25)}
+            {potBtn("50%", 0.5)}
+            {potBtn("75%", 0.75)}
+            {potBtn("100%", 1.0)}
+          </div>
+
+          <div style={S.customRow}>
+            <input style={S.raiseInput} type="number" inputMode="numeric"
+              placeholder={"직접 입력 (최소 " + minRaiseTotal.toLocaleString() + ")"}
+              value={raiseInput} onChange={function (ev) { setRaiseInput(ev.target.value); }} />
+            <button style={S.btnAction} onClick={function () { doAction("raise", Math.max(Number(raiseInput) || 0, minRaiseTotal)); }}>레이즈</button>
+          </div>
         </div>
       )}
+
       {!isMyTurn && meP.status === "active" && r.stage !== "handover" && <div style={S.waitBar}>다른 플레이어의 차례입니다…</div>}
+      {meP.status === "waiting" && <div style={S.waitBar}>🪑 다음 핸드부터 참가합니다</div>}
       {meP.status === "folded" && r.stage !== "handover" && <div style={S.waitBar}>이번 핸드는 폴드했습니다</div>}
       {meP.status === "allin" && r.stage !== "handover" && <div style={S.waitBar}>올인 상태입니다</div>}
       {meP.status === "out" && <div style={S.waitBar}>탈락했습니다 — 관전 중</div>}
@@ -830,37 +821,56 @@ function Card(props) {
   return (
     <div style={Object.assign({}, S.card, { color: SUIT_COLOR[suit] })}>
       <div>{rankLabel(rank)}</div>
-      <div style={{ fontSize: 18 }}>{SUIT_GLYPH[suit]}</div>
+      <div style={{ fontSize: 18, lineHeight: 1 }}>{SUIT_GLYPH[suit]}</div>
     </div>
   );
 }
 
 function PlayerChip(props) {
-  var p = props.p;
+  var p = props.p, r = props.r;
   if (!p) return <div />;
   var folded = p.status === "folded";
   var out = p.status === "out";
+  var waiting = p.status === "waiting";
+
   var style = Object.assign({}, S.playerCard, {
     borderColor: props.isTurn ? "#d4af37" : "#3a3f3a",
-    opacity: out ? 0.35 : (folded ? 0.5 : 1),
+    opacity: out ? 0.35 : ((folded || waiting) ? 0.5 : 1),
     boxShadow: props.isTurn ? "0 0 14px rgba(212,175,55,0.55)" : "none"
   });
+
+  var isDealer = p.seat === r.dealerSeat;
+  var isSB = p.seat === r.sbSeat;
+  var isBB = p.seat === r.bbSeat;
+
   return (
     <div style={style}>
       <div style={S.playerNameRow}>
-        {props.isDealer && <span style={S.dealerBtn}>D</span>}
+        {isDealer && <span style={S.dealerBtn}>D</span>}
+        {isSB && <span style={Object.assign({}, S.posBadge, { background: "#5b8f6f", color: "#0c1a12" })}>SB</span>}
+        {isBB && <span style={Object.assign({}, S.posBadge, { background: "#3f6fa8", color: "#f0f6ff" })}>BB</span>}
         <span style={S.playerName}>{p.name}</span>
       </div>
       <div style={S.playerStack}>{p.stack.toLocaleString()}</div>
+
+      {props.isTurn && (
+        <div style={Object.assign({}, S.turnCount, props.turnLeft <= 3 ? { color: "#d9534f" } : {})}>
+          ⏱ {props.turnLeft}s
+        </div>
+      )}
+
       {p.betThisRound > 0 && <div style={S.betChip}>베팅 {p.betThisRound.toLocaleString()}</div>}
+
       <div style={S.holeCards}>
-        {(p.cards || []).map(function (c, i) {
-          if (props.reveal && !out && c) return <Card key={i} card={c} />;
+        {(p.cards || []).map(function (cd, i) {
+          if (props.reveal && !out && cd) return <Card key={i} card={cd} />;
           if (p.cards && p.cards.length) return <div key={i} style={S.cardBackSm} />;
           return null;
         })}
       </div>
+
       {out && <div style={S.outLabel}>{p.finishRank ? p.finishRank + "위 탈락" : "탈락"}</div>}
+      {waiting && <div style={S.waitLabel}>대기 중</div>}
       {folded && !out && <div style={S.outLabel}>폴드</div>}
       {p.status === "allin" && <div style={S.outLabel}>올인</div>}
     </div>
@@ -869,15 +879,19 @@ function PlayerChip(props) {
 
 var S = {
   wrap: { minHeight: "100vh", background: "radial-gradient(circle at 50% 0%, #1a2420, #0c0f0d)", color: "#ece6d8", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 },
-  center: { textAlign: "center", maxWidth: 360, width: "100%" },
+  center: { textAlign: "center", maxWidth: 380, width: "100%" },
   logo: { fontSize: 26, letterSpacing: 2, marginBottom: 6, color: "#d4af37" },
   subtle: { color: "#b9b2a0", marginBottom: 18, fontSize: 14 },
   tiny: { color: "#8a8576", fontSize: 12, marginTop: 8 },
-  input: { width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 8, border: "1px solid #3a3f3a", background: "#1a1d19", color: "#ece6d8", fontSize: 16, marginBottom: 12, outline: "none" },
+  pre: { background: "#1a1d19", padding: 12, borderRadius: 8, fontSize: 12, textAlign: "left", color: "#f3e3a3" },
+  input: { width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #3a3f3a", background: "#1a1d19", color: "#ece6d8", fontSize: 16, marginBottom: 12, outline: "none" },
   btnGold: { width: "100%", padding: "12px 14px", borderRadius: 8, border: "none", background: "linear-gradient(180deg,#e7c465,#b9942f)", color: "#1a1500", fontWeight: 700, fontSize: 15, cursor: "pointer", marginBottom: 10 },
   btnGhost: { width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #3a3f3a", background: "transparent", color: "#8a8576", fontSize: 13, cursor: "pointer" },
   lobbyList: { background: "rgba(20,24,21,0.5)", border: "1px solid #2a2f29", borderRadius: 8, padding: 10, marginBottom: 16, textAlign: "left" },
   lobbyRow: { display: "flex", justifyContent: "space-between", padding: "6px 4px", borderBottom: "1px solid #22251f", fontSize: 14 },
+  scheduleBox: { background: "rgba(20,24,21,0.5)", border: "1px solid #2a2f29", borderRadius: 8, padding: 10, margin: "16px 0", textAlign: "left" },
+  scheduleTitle: { color: "#8a8576", fontSize: 12, marginBottom: 6 },
+
   tableWrap: { minHeight: "100vh", background: "#0c0f0d", color: "#ece6d8", display: "flex", flexDirection: "column" },
   topBar: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px solid #1f2420" },
   brand: { color: "#d4af37", fontWeight: 700, fontSize: 15 },
@@ -887,28 +901,45 @@ var S = {
   levelBlind: { color: "#f3e3a3", fontWeight: 700, fontSize: 14, marginLeft: 6 },
   levelTimer: { fontSize: 13, color: "#b9b2a0" },
   levelUpNotice: { textAlign: "center", padding: "6px 10px", background: "#3a2a14", color: "#f3e3a3", fontSize: 13, fontWeight: 700 },
+  lateRegNotice: { textAlign: "center", padding: "5px 10px", background: "#14301f", color: "#8fd6a8", fontSize: 12 },
+
   felt: { flex: 1, background: "radial-gradient(ellipse at center, #1f6b4a 0%, #14442f 70%, #0c2a1c 100%)", margin: 10, borderRadius: 24, border: "6px solid #3a2a14", padding: 16, display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 12 },
   othersRow: { display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" },
   boardArea: { textAlign: "center", padding: "8px 0" },
   potLabel: { color: "#f3e3a3", fontWeight: 700, marginBottom: 8, fontSize: 15, letterSpacing: 1 },
   community: { display: "flex", gap: 6, justifyContent: "center" },
   stageLabel: { marginTop: 8, fontSize: 12, color: "#cfe9da", letterSpacing: 2 },
-  card: { width: 38, height: 54, background: "#fffdf7", borderRadius: 6, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 16, boxShadow: "0 2px 4px rgba(0,0,0,0.4)" },
+
+  card: { width: 38, height: 54, background: "#fffdf7", borderRadius: 6, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16, boxShadow: "0 2px 4px rgba(0,0,0,0.4)" },
   cardBack: { width: 38, height: 54, borderRadius: 6, background: "repeating-linear-gradient(45deg,#1c3a2c,#1c3a2c 4px,#163023 4px,#163023 8px)", border: "1px solid #0c2a1c" },
   cardBackSm: { width: 26, height: 36, borderRadius: 4, background: "repeating-linear-gradient(45deg,#1c3a2c,#1c3a2c 4px,#163023 4px,#163023 8px)", border: "1px solid #0c2a1c" },
-  playerCard: { background: "rgba(14,20,17,0.8)", border: "2px solid #3a3f3a", borderRadius: 12, padding: "8px 10px", minWidth: 110, textAlign: "center", position: "relative" },
-  playerNameRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 13, fontWeight: 700 },
+
+  playerCard: { background: "rgba(14,20,17,0.85)", border: "2px solid #3a3f3a", borderRadius: 12, padding: "8px 10px", minWidth: 112, textAlign: "center" },
+  playerNameRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 13, fontWeight: 700 },
   dealerBtn: { background: "#d4af37", color: "#1a1500", fontSize: 10, fontWeight: 800, borderRadius: "50%", width: 16, height: 16, display: "inline-flex", alignItems: "center", justifyContent: "center" },
+  posBadge: { fontSize: 9, fontWeight: 800, borderRadius: 4, padding: "1px 4px" },
   playerName: { color: "#ece6d8" },
   playerStack: { fontSize: 12, color: "#cfe9da", marginTop: 2 },
+  turnCount: { fontSize: 11, color: "#f3e3a3", fontWeight: 700, marginTop: 2 },
   betChip: { fontSize: 11, color: "#1a1500", background: "#d4af37", borderRadius: 10, padding: "1px 8px", display: "inline-block", marginTop: 4 },
   holeCards: { display: "flex", gap: 4, justifyContent: "center", marginTop: 6 },
   outLabel: { fontSize: 10, color: "#d9534f", marginTop: 4, fontWeight: 700 },
+  waitLabel: { fontSize: 10, color: "#8fd6a8", marginTop: 4, fontWeight: 700 },
+
   handoverBar: { padding: 14, textAlign: "center" },
-  actionBar: { display: "flex", gap: 8, padding: 12, flexWrap: "wrap", borderTop: "1px solid #1f2420", alignItems: "center", justifyContent: "center" },
-  btnAction: { background: "#1c2420", border: "1px solid #3a3f3a", color: "#ece6d8", padding: "10px 14px", borderRadius: 8, fontSize: 14, cursor: "pointer" },
-  btnAllin: { background: "#7a1f1f", border: "1px solid #a93a3a", color: "#fff", padding: "10px 14px", borderRadius: 8, fontSize: 14, cursor: "pointer", fontWeight: 700 },
-  raiseInput: { width: 150, padding: "10px 10px", borderRadius: 8, border: "1px solid #3a3f3a", background: "#14181a", color: "#ece6d8", fontSize: 13 },
+  actionZone: { borderTop: "1px solid #1f2420", padding: "8px 10px 12px" },
+  turnTimerBar: { height: 4, background: "#22251f", borderRadius: 2, overflow: "hidden", marginBottom: 4 },
+  turnTimerFill: { height: "100%", transition: "width 0.4s linear" },
+  turnTimerTxt: { textAlign: "center", fontSize: 12, color: "#b9b2a0", marginBottom: 8 },
+  actionBar: { display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginBottom: 8 },
+  btnAction: { background: "#1c2420", border: "1px solid #3a3f3a", color: "#ece6d8", padding: "10px 16px", borderRadius: 8, fontSize: 14, cursor: "pointer" },
+  btnAllin: { background: "#7a1f1f", border: "1px solid #a93a3a", color: "#fff", padding: "10px 16px", borderRadius: 8, fontSize: 14, cursor: "pointer", fontWeight: 700 },
+  potRow: { display: "flex", gap: 6, justifyContent: "center", marginBottom: 8 },
+  btnPot: { flex: 1, maxWidth: 90, background: "#1a2a22", border: "1px solid #2f5a45", color: "#cfe9da", padding: "8px 4px", borderRadius: 8, fontSize: 13, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 },
+  btnPotSub: { fontSize: 10, color: "#8fb8a0" },
+  customRow: { display: "flex", gap: 6, justifyContent: "center" },
+  raiseInput: { flex: 1, maxWidth: 220, padding: "10px", borderRadius: 8, border: "1px solid #3a3f3a", background: "#14181a", color: "#ece6d8", fontSize: 13 },
+
   waitBar: { textAlign: "center", padding: 12, color: "#8a8576", fontSize: 13, borderTop: "1px solid #1f2420" },
   log: { maxHeight: 130, overflowY: "auto", padding: "8px 14px 16px", fontSize: 12, color: "#9aa39a", borderTop: "1px solid #1f2420" },
   logLine: { padding: "2px 0" }
