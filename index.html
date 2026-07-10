@@ -1,0 +1,2201 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NL 홀덤 토너먼트</title>
+<style>
+  html, body, #root { height: 100%; margin: 0; }
+  * { box-sizing: border-box; }
+  body { background:#0c0f0d; color:#ece6d8; font-family: Georgia, 'Apple SD Gothic Neo', serif; }
+  #boot-error { display:none; padding:40px 24px; max-width:560px; margin:0 auto; line-height:1.75; font-size:14px; }
+  #boot-error h2 { color:#d4af37; }
+  #boot-error code { background:#1a1d19; padding:2px 6px; border-radius:4px; font-size:13px; color:#f3e3a3; }
+  #boot-error pre { background:#1a1d19; padding:12px; border-radius:8px; overflow-x:auto; font-size:12px; color:#d9534f; white-space:pre-wrap; }
+  #bgm-holder { position:fixed; top:-9999px; left:-9999px; width:0; height:0; opacity:0; pointer-events:none; }
+  @keyframes pulseRed { 0%,100% { opacity:1; } 50% { opacity:0.45; } }
+  @keyframes popIn { 0% { transform:scale(0.6); opacity:0; } 100% { transform:scale(1); opacity:1; } }
+  @keyframes glow { 0%,100% { box-shadow:0 0 10px rgba(212,175,55,0.5); } 50% { box-shadow:0 0 22px rgba(212,175,55,0.95); } }
+  @keyframes spinSlow { from { transform: translate(-50%,-50%) rotate(0deg); } to { transform: translate(-50%,-50%) rotate(360deg); } }
+  @keyframes dealIn {
+    0%   { transform: translate(0,-70px) rotate(480deg) scale(0.25); opacity: 0; }
+    55%  { opacity: 1; }
+    100% { transform: translate(0,0) rotate(0deg) scale(1); opacity: 1; }
+  }
+  @keyframes flipIn {
+    0%   { transform: perspective(500px) rotateY(92deg) scale(0.85); opacity: 0.3; }
+    100% { transform: perspective(500px) rotateY(0deg) scale(1); opacity: 1; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="boot-error"></div>
+
+<!-- [2] 배경음악 (YouTube IFrame API, 화면 밖 숨김) -->
+<div id="bgm-holder"></div>
+<script>
+window.BGM = (function () {
+  var VIDEO_ID = "NmqfKMv8r9U";   /* 배경음악 (첫 화면 · 대기실) */
+  var player = null, wantPlay = false;
+  var enabled = true;   /* 기본값 ON */
+  try {
+    var savedBgm = localStorage.getItem("holdem_bgm");
+    enabled = (savedBgm === null || savedBgm === undefined) ? true : (savedBgm !== "0");
+  } catch (e) { enabled = true; }
+
+  function sync() {
+    if (!player || !player.playVideo) return;
+    try {
+      if (enabled && wantPlay) player.playVideo();
+      else player.pauseVideo();
+    } catch (e) {}
+  }
+
+  /* iframe_api 스크립트가 로드되면 호출된다 (아래 script 태그보다 먼저 정의해야 함) */
+  window.onYouTubeIframeAPIReady = function () {
+    try {
+      player = new YT.Player("bgm-holder", {
+        height: "0", width: "0", videoId: VIDEO_ID,
+        playerVars: {
+          autoplay: 1, loop: 1, playlist: VIDEO_ID,
+          controls: 0, disablekb: 1, playsinline: 1, modestbranding: 1, rel: 0
+        },
+        events: {
+          onReady: function (e) { try { e.target.setVolume(28); } catch (x) {} sync(); },
+          onStateChange: function (e) {
+            /* 영상이 끝나면 처음부터 반복 */
+            if (window.YT && e.data === YT.PlayerState.ENDED) {
+              try { player.seekTo(0); player.playVideo(); } catch (x) {}
+            }
+          }
+        }
+      });
+    } catch (e) {}
+  };
+
+  return {
+    isEnabled: function () { return enabled; },
+    setEnabled: function (v) {
+      enabled = !!v;
+      try { localStorage.setItem("holdem_bgm", v ? "1" : "0"); } catch (e) {}
+      sync();
+    },
+    /* 음악을 틀어야 하는 화면인지 여부 */
+    setActive: function (v) { wantPlay = !!v; sync(); },
+    /* 브라우저 자동재생 차단 해제용 (사용자 제스처 이후 호출) */
+    kick: function () { sync(); }
+  };
+})();
+</script>
+<script src="https://www.youtube.com/iframe_api"></script>
+
+<!-- ⬇️ 설정 파일. 이 파일(firebase-config.js)만 수정하면 됩니다. -->
+<script src="firebase-config.js"></script>
+
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+<script>
+/* ===== 아래는 수정할 필요 없습니다 ===== */
+var db = null;
+function showBootError(html) {
+  var el = document.getElementById("boot-error");
+  el.innerHTML = html; el.style.display = "block";
+}
+(function initFirebase() {
+  try {
+    var cfg = window.FIREBASE_CONFIG || window.firebaseConfig || null;
+    if (!window.firebase) {
+      showBootError("<h2>⚠️ Firebase 스크립트 로드 실패</h2><p>인터넷 연결 또는 <code>gstatic.com</code> 차단 여부를 확인해주세요.</p>");
+      return;
+    }
+    if (!cfg) {
+      showBootError("<h2>⚙️ 설정 파일을 찾을 수 없습니다</h2><p><code>firebase-config.js</code> 가 <code>index.html</code> 과 같은 폴더에 있는지 확인해주세요.</p>");
+      return;
+    }
+    var missing = [];
+    ["apiKey","authDomain","databaseURL","projectId","appId"].forEach(function (k) {
+      var v = cfg[k];
+      if (!v || String(v).indexOf("여기에") === 0 || String(v).indexOf("YOUR_") === 0) missing.push(k);
+    });
+    if (missing.length) {
+      showBootError(
+        "<h2>⚙️ Firebase 설정이 필요합니다</h2>" +
+        "<p><code>firebase-config.js</code> 에서 아래 항목을 아직 채우지 않으셨습니다:</p>" +
+        "<pre>" + missing.join("\n") + "</pre>" +
+        "<p>Firebase 콘솔 → 프로젝트 설정(⚙️) → 내 앱 → 웹앱 에서 값을 옮겨 적으세요.<br>" +
+        "※ <code>import</code> 나 <code>initializeApp</code> 같은 코드는 넣지 말고 <b>값만</b> 넣으세요.</p>"
+      );
+      return;
+    }
+    firebase.initializeApp(cfg);
+    db = firebase.database();
+  } catch (e) {
+    showBootError("<h2>⚠️ Firebase 초기화 오류</h2><p><code>databaseURL</code> 등 값이 올바른지 확인해주세요.</p><pre>" + (e.message || e) + "</pre>");
+  }
+})();
+</script>
+
+<script type="text/babel" data-presets="react">
+/* =========================================================================
+   NL 홀덤 토너먼트 v4
+   - 개인 족보 실시간 표시 (본인에게만)
+   - 타원형 테이블 · 시계방향 좌석 배치
+   - 준비 기반 자동 시작 로비 (+뒤로가기)
+   - 홀덤 설명 카드뉴스 5장
+   ========================================================================= */
+var useState = React.useState;
+var useEffect = React.useEffect;
+var useRef = React.useRef;
+
+var STARTING_STACK = 30000;
+var MAX_PLAYERS = 9;
+var LEVEL_SECONDS = 5 * 60;
+var TURN_SECONDS = 10;
+var RUNOUT_MS = 1800;
+var HANDOVER_SHOWDOWN_MS = 7000;
+var HANDOVER_QUICK_MS = 2800;
+var BACKUP_DELAY_MS = 3000;
+var AUTOSTART_DELAY_MS = 1500;
+var MAX_TIMEOUT_STREAK = 10;      /* 연속 시간초과 강제항복 기준 */
+var MIN_READY_TO_START = 2; // 전원 준비 안해도, 이 인원 이상만 준비완료되면 자동 시작
+var LOBBY_READY_TIMEOUT_MS = 30 * 60 * 1000; // 대기실에서 30분 이상 미준비 시 자동 퇴장
+var ROOM_PATH = "holdem_tourney";
+var ID_KEY = "holdem_identity";
+var NICK_KEY = "holdem_nickname";   /* 좌석을 떠나도 닉네임은 유지 */
+
+function blindsForLevel(i) {
+  var g = Math.floor(i / 5), p = i % 5;
+  var sb = (p + 1) * 100 * Math.pow(10, g);
+  return { sb: sb, bb: sb * 2 };
+}
+function currentLevelIdx(startAt) {
+  if (!startAt) return 0;
+  return Math.floor(Math.max(0, (Date.now() - startAt) / 1000) / LEVEL_SECONDS);
+}
+function secsToNextLevel(startAt) {
+  if (!startAt) return LEVEL_SECONDS;
+  var el = Math.max(0, (Date.now() - startAt) / 1000);
+  return Math.ceil(LEVEL_SECONDS - (el % LEVEL_SECONDS));
+}
+function pad2(n) { var s = String(n); return s.length < 2 ? "0" + s : s; }
+
+/* 시스템 공지를 채팅에 남긴다 (대기실에서도 보이도록) */
+function pushSystemChat(st, text) {
+  /* 실제 append 는 saveRoom() 이 채팅 노드 트랜잭션으로 수행한다.
+     (게임 상태 저장이 채팅을 덮어쓰지 않도록 분리) */
+  st.__sys = (st.__sys || []).concat([String(text).slice(0, 160)]);
+}
+
+/* Firebase가 배열을 객체로 되돌려줄 수 있어 항상 배열로 정규화 */
+function toArr(v) {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.filter(Boolean);
+  return Object.keys(v).map(function (k) { return v[k]; }).filter(Boolean);
+}
+
+/* [3] 채팅 시각 표기: 07-10 18:54 */
+function fmtTime(ts) {
+  if (!ts) return "";
+  var d = new Date(ts);
+  return pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+}
+
+var SUITS = ["s", "h", "d", "c"];
+var SUIT_GLYPH = { s: "♠", h: "♥", d: "♦", c: "♣" };
+var SUIT_COLOR = { s: "#101010", c: "#101010", h: "#c62828", d: "#c62828" };
+var RANK_TXT = { 11: "J", 12: "Q", 13: "K", 14: "A" };
+function rankLabel(r) { return RANK_TXT[r] || String(r); }
+
+function freshDeck() {
+  var d = [];
+  for (var si = 0; si < SUITS.length; si++) for (var r = 2; r <= 14; r++) d.push([r, SUITS[si]]);
+  for (var i = d.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = d[i]; d[i] = d[j]; d[j] = t; }
+  return d;
+}
+
+function evaluate5(cards) {
+  var ranks = cards.map(function (c) { return c[0]; }).sort(function (a, b) { return b - a; });
+  var suits = cards.map(function (c) { return c[1]; });
+  var isFlush = suits.every(function (s) { return s === suits[0]; });
+  var counts = {};
+  ranks.forEach(function (r) { counts[r] = (counts[r] || 0) + 1; });
+  var byCount = Object.keys(counts).map(function (r) { return [Number(r), counts[r]]; })
+    .sort(function (a, b) { return (b[1] - a[1]) || (b[0] - a[0]); });
+  var uniq = ranks.filter(function (v, i, arr) { return arr.indexOf(v) === i; });
+  var sh = 0;
+  if (uniq.length === 5) {
+    if (uniq[0] - uniq[4] === 4) sh = uniq[0];
+    else if (uniq.join(",") === "14,5,4,3,2") sh = 5;
+  }
+  if (sh && isFlush) return [8, sh];
+  if (byCount[0][1] === 4) return [7, byCount[0][0], byCount[1][0]];
+  if (byCount[0][1] === 3 && byCount[1][1] === 2) return [6, byCount[0][0], byCount[1][0]];
+  if (isFlush) return [5].concat(ranks);
+  if (sh) return [4, sh];
+  if (byCount[0][1] === 3) return [3, byCount[0][0]].concat(byCount.slice(1).map(function (x) { return x[0]; }));
+  if (byCount[0][1] === 2 && byCount[1][1] === 2) {
+    var pr = [byCount[0][0], byCount[1][0]].sort(function (a, b) { return b - a; });
+    return [2, pr[0], pr[1], byCount[2][0]];
+  }
+  if (byCount[0][1] === 2) return [1, byCount[0][0]].concat(byCount.slice(1).map(function (x) { return x[0]; }));
+  return [0].concat(ranks);
+}
+function cmpScore(a, b) {
+  var L = Math.max(a.length, b.length);
+  for (var i = 0; i < L; i++) { var x = a[i] || 0, y = b[i] || 0; if (x !== y) return x - y; }
+  return 0;
+}
+function best7(c7) {
+  var best = null, n = c7.length;
+  for (var a = 0; a < n; a++) for (var b = a+1; b < n; b++) for (var c = b+1; c < n; c++)
+    for (var d = c+1; d < n; d++) for (var e = d+1; e < n; e++) {
+      var five = [c7[a], c7[b], c7[c], c7[d], c7[e]];
+      var sc = evaluate5(five);
+      if (!best || cmpScore(sc, best.score) > 0) best = { score: sc, five: five };
+    }
+  return best;
+}
+var HAND_NAMES = ["하이카드","원페어","투페어","트리플","스트레이트","플러시","풀하우스","포카드","스트레이트 플러시"];
+
+/* ========== 효과음 (Web Audio 합성 — 외부 파일 불필요) ========== */
+var SFX = (function () {
+  var ctx = null;
+  var muted = false;
+  try { muted = localStorage.getItem("holdem_muted") === "1"; } catch (e) {}
+
+  function ac() {
+    if (!ctx) {
+      try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; }
+    }
+    if (ctx && ctx.state === "suspended") ctx.resume();
+    return ctx;
+  }
+  function tone(freq, type, dur, vol, when, slideTo) {
+    var c = ac(); if (!c || muted) return;
+    var t0 = c.currentTime + (when || 0);
+    var o = c.createOscillator(), g = c.createGain();
+    o.type = type || "sine";
+    o.frequency.setValueAtTime(freq, t0);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(vol || 0.12, t0 + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(c.destination);
+    o.start(t0); o.stop(t0 + dur + 0.05);
+  }
+  function noise(dur, vol, when, hpFreq) {
+    var c = ac(); if (!c || muted) return;
+    var t0 = c.currentTime + (when || 0);
+    var len = Math.max(1, Math.floor(c.sampleRate * dur));
+    var buf = c.createBuffer(1, len, c.sampleRate);
+    var data = buf.getChannelData(0);
+    for (var i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    var src = c.createBufferSource(); src.buffer = buf;
+    var f = c.createBiquadFilter(); f.type = "highpass"; f.frequency.value = hpFreq || 1200;
+    var g = c.createGain(); g.gain.setValueAtTime(vol || 0.1, t0);
+    src.connect(f); f.connect(g); g.connect(c.destination);
+    src.start(t0);
+  }
+  return {
+    unlock: function () { ac(); },
+    isMuted: function () { return muted; },
+    setMuted: function (m) { muted = m; try { localStorage.setItem("holdem_muted", m ? "1" : "0"); } catch (e) {} },
+    deal:   function (when) { noise(0.06, 0.11, when, 2400); },                              // 카드 스냅
+    flip:   function (when) { noise(0.05, 0.09, when, 1500); tone(920, "triangle", 0.09, 0.06, when); },
+    chip:   function () { tone(2300, "square", 0.03, 0.05, 0); tone(1750, "square", 0.035, 0.05, 0.055); }, // 칩 부딪힘
+    check:  function () { tone(210, "sine", 0.055, 0.13, 0); tone(170, "sine", 0.055, 0.11, 0.09); },       // 테이블 노크
+    fold:   function () { noise(0.13, 0.06, 0, 700); },
+    myTurn: function () { tone(660, "sine", 0.1, 0.1, 0); tone(990, "sine", 0.13, 0.08, 0.1); },
+    tick:   function () { tone(1250, "square", 0.045, 0.06, 0); },
+    allin:  function () { tone(180, "sawtooth", 0.55, 0.1, 0, 760); noise(0.3, 0.05, 0.1, 900); },
+    win:    function () { [523, 659, 784, 1047].forEach(function (fr, i) { tone(fr, "triangle", 0.2, 0.1, i * 0.12); }); },
+    levelup:function () { tone(784, "sine", 0.16, 0.1, 0); tone(1047, "sine", 0.26, 0.1, 0.16); }
+  };
+})();
+
+/* [1] 본인 전용 실시간 족보 계산 (DB에 저장하지 않음 → 남에게 안 보임) */
+function myHandLabel(holeCards, community) {
+  if (!holeCards || holeCards.length < 2) return null;
+  var all = holeCards.concat(community || []);
+  if (all.length < 5) {
+    if (holeCards[0][0] === holeCards[1][0]) return "원페어 (" + rankLabel(holeCards[0][0]) + ")";
+    var hi = Math.max(holeCards[0][0], holeCards[1][0]);
+    return "하이카드 (" + rankLabel(hi) + ")";
+  }
+  var b = best7(all);
+  return HAND_NAMES[b.score[0]] + " (" + rankLabel(b.score[1]) + ")";
+}
+
+function findBySeat(st, s) { for (var k = 0; k < st.players.length; k++) if (st.players[k].seat === s) return st.players[k]; return null; }
+function findById(st, id) { for (var k = 0; k < st.players.length; k++) if (st.players[k].id === id) return st.players[k]; return null; }
+function inHandPlayers(st) { return st.players.filter(function (p) { return p.status === "active" || p.status === "allin"; }); }
+function eligibleActors(st) { return st.players.filter(function (p) { return p.status === "active"; }); }
+function alivePlayers(st) { return st.players.filter(function (p) { return p.status !== "out"; }); }
+
+function nextSeat(st, fromSeat, opts) {
+  opts = opts || {};
+  var n = st.players.length, s = fromSeat;
+  for (var i = 0; i < n; i++) {
+    s = (s + 1) % n;
+    var p = findBySeat(st, s);
+    if (!p || p.status === "out") continue;
+    if (opts.actableOnly && p.status !== "active") continue;
+    return p;
+  }
+  return null;
+}
+function setTurn(st, id) {
+  st.currentTurnId = id || null;
+  st.turnDeadline = id ? (Date.now() + TURN_SECONDS * 1000) : null;
+}
+
+function bettingRoundComplete(st) {
+  if (inHandPlayers(st).length <= 1) return true;
+  var actors = eligibleActors(st);
+  if (actors.length === 0) return true;
+  return actors.every(function (p) { return p.hasActed && p.betThisRound === st.currentBet; });
+}
+function resetRoundFlags(st) {
+  st.players.forEach(function (p) { p.betThisRound = 0; p.hasActed = false; });
+  st.currentBet = 0; st.minRaise = st.bb; st.lastAggressorId = null;
+}
+function dealStreet(st) {
+  if (st.stage === "preflop") { st.deck.pop(); st.community.push(st.deck.pop(), st.deck.pop(), st.deck.pop()); st.stage = "flop"; }
+  else if (st.stage === "flop") { st.deck.pop(); st.community.push(st.deck.pop()); st.stage = "turn"; }
+  else if (st.stage === "turn") { st.deck.pop(); st.community.push(st.deck.pop()); st.stage = "river"; }
+}
+function buildSidePots(st) {
+  var contrib = st.players.filter(function (p) { return p.totalBetThisHand > 0; });
+  var set = {}; contrib.forEach(function (p) { set[p.totalBetThisHand] = true; });
+  var levels = Object.keys(set).map(Number).sort(function (a, b) { return a - b; });
+  var pots = [], prev = 0;
+  levels.forEach(function (lv) {
+    var layer = contrib.filter(function (p) { return p.totalBetThisHand >= lv; });
+    var amt = (lv - prev) * layer.length;
+    if (amt > 0) pots.push({
+      amount: amt,
+      eligiblePlayerIds: st.players.filter(function (p) {
+        return p.totalBetThisHand >= lv && (p.status === "active" || p.status === "allin");
+      }).map(function (p) { return p.id; })
+    });
+    prev = lv;
+  });
+  return pots;
+}
+
+function resolveShowdown(st) {
+  var inHand = inHandPlayers(st);
+  st.log.unshift("--- 쇼다운 ---");
+  var res = {};
+  inHand.forEach(function (p) { res[p.id] = best7(p.cards.concat(st.community)); });
+
+  var winnerSet = {};
+  var pots = buildSidePots(st);
+  pots.forEach(function (pot, idx) {
+    var elig = pot.eligiblePlayerIds.filter(function (id) { return res[id]; });
+    if (!elig.length) return;
+    var bs = null;
+    elig.forEach(function (id) { if (!bs || cmpScore(res[id].score, bs) > 0) bs = res[id].score; });
+    var wins = elig.filter(function (id) { return cmpScore(res[id].score, bs) === 0; });
+    var share = Math.floor(pot.amount / wins.length);
+    var rem = pot.amount - share * wins.length;
+    wins.forEach(function (id, i) { findById(st, id).stack += share + (i < rem ? 1 : 0); winnerSet[id] = true; });
+    var label = pots.length > 1 ? ("사이드팟" + (idx + 1)) : "팟";
+    var names = wins.map(function (id) { return findById(st, id).name; }).join(", ");
+    st.log.unshift(label + " " + pot.amount.toLocaleString() + " → " + names + " (" + HAND_NAMES[bs[0]] + ")");
+  });
+
+  st.revealCards = true;
+  st.winnerIds = Object.keys(winnerSet);
+  st.handNames = {};
+  inHand.forEach(function (p) {
+    st.handNames[p.id] = HAND_NAMES[res[p.id].score[0]];
+    var txt = p.cards.map(function (c) { return rankLabel(c[0]) + SUIT_GLYPH[c[1]]; }).join(" ");
+    st.log.unshift(p.name + ": " + txt + " — " + st.handNames[p.id]);
+  });
+
+  endHandCleanup(st, HANDOVER_SHOWDOWN_MS);
+}
+
+function awardUncontested(st) {
+  var w = inHandPlayers(st)[0];
+  var total = st.players.reduce(function (s, p) { return s + p.totalBetThisHand; }, 0);
+  if (w) {
+    w.stack += total;
+    st.winnerIds = [w.id];
+    st.log.unshift(w.name + "님이 " + total.toLocaleString() + " 획득 (모두 폴드)");
+  }
+  st.revealCards = false;
+  endHandCleanup(st, HANDOVER_QUICK_MS);
+}
+
+function endHandCleanup(st, delayMs) {
+  st.runout = false;
+  st.nextStreetAt = null;
+  st.players.forEach(function (p) {
+    if (p.stack <= 0 && p.status !== "out" && p.status !== "waiting") {
+      p.status = "out";
+      p.finishRank = alivePlayers(st).length + 1;
+      st.log.unshift(p.name + "님 칩 소진 — " + p.finishRank + "위로 탈락");
+    }
+  });
+  var remain = alivePlayers(st);
+  st.stage = "handover";
+  setTurn(st, null);
+  st.handoverAt = Date.now();
+  st.handoverDelay = delayMs || HANDOVER_QUICK_MS;
+  if (remain.length <= 1) {
+    st.stage = "gameover";
+    if (remain.length === 1) { remain[0].finishRank = 1; st.log.unshift("🏆 " + remain[0].name + "님 우승!"); }
+  }
+  st.log = st.log.slice(0, 60);
+}
+
+function advanceState(st) {
+  if (inHandPlayers(st).length <= 1) { awardUncontested(st); return st; }
+
+  if (!bettingRoundComplete(st)) {
+    var cur = findById(st, st.currentTurnId);
+    var nxt = nextSeat(st, cur ? cur.seat : -1, { actableOnly: true });
+    setTurn(st, nxt ? nxt.id : null);
+    return st;
+  }
+
+  resetRoundFlags(st);
+
+  if (st.stage === "river") { resolveShowdown(st); return st; }
+
+  if (eligibleActors(st).length < 2) {
+    st.runout = true;
+    st.revealCards = true;
+    setTurn(st, null);
+    st.nextStreetAt = Date.now() + RUNOUT_MS;
+    st.log.unshift("🔥 올인 — 카드를 오픈하고 리버까지 진행합니다");
+    st.log = st.log.slice(0, 60);
+    return st;
+  }
+
+  dealStreet(st);
+  /* 플랍/턴/리버는 SB부터 액션 (SB가 액션 불가면 그 다음 사람) */
+  var sbP = findBySeat(st, st.sbSeat);
+  var first = (sbP && sbP.status === "active") ? sbP : nextSeat(st, st.sbSeat, { actableOnly: true });
+  setTurn(st, first ? first.id : null);
+  return st;
+}
+
+function progressRunout(st) {
+  if (st.stage === "river") { resolveShowdown(st); return st; }
+  dealStreet(st);
+  st.nextStreetAt = Date.now() + RUNOUT_MS;
+  return st;
+}
+
+function surrender(st, pid) {
+  var p = findById(st, pid);
+  if (!p || p.status === "out") return null;
+
+  var aliveBefore = alivePlayers(st).length;
+  var wasTurn = st.currentTurnId === pid;
+  var midHand = (st.stage === "preflop" || st.stage === "flop" || st.stage === "turn" || st.stage === "river");
+
+  p.status = "out";
+  p.stack = 0;
+  p.finishRank = aliveBefore;
+  st.log.unshift("🏳️ " + p.name + "님 항복 — " + aliveBefore + "위로 종료");
+
+  var aliveAfter = aliveBefore - 1;
+
+  if (aliveAfter <= 1) {
+    var w = alivePlayers(st)[0];
+    if (w) {
+      var potLeft = st.players.reduce(function (s, x) { return s + (x.totalBetThisHand || 0); }, 0);
+      if (potLeft > 0 && midHand) w.stack += potLeft;
+      w.finishRank = 1;
+      st.log.unshift("🏆 " + w.name + "님 우승!");
+    }
+    st.stage = "gameover";
+    st.runout = false;
+    st.nextStreetAt = null;
+    setTurn(st, null);
+    st.log = st.log.slice(0, 60);
+    return st;
+  }
+
+  if (midHand) {
+    if (inHandPlayers(st).length <= 1) { awardUncontested(st); return st; }
+    if (st.runout) { st.log = st.log.slice(0, 60); return st; }
+    if (wasTurn || bettingRoundComplete(st)) advanceState(st);
+  }
+  st.log = st.log.slice(0, 60);
+  return st;
+}
+
+function startHand(st, opts) {
+  var onlyReady = !!(opts && opts.onlyReady);
+  st.players.forEach(function (p) {
+    if (p.status === "waiting" && p.stack > 0 && (!onlyReady || p.ready)) p.status = "active";
+  });
+
+  var alive = alivePlayers(st);
+  if (alive.length < 2) { st.stage = "gameover"; return st; }
+
+  var lvl = currentLevelIdx(st.tournamentStartAt);
+  var bl = blindsForLevel(lvl);
+  var levelChanged = st.handNumber > 0 && st.level !== lvl;
+  st.level = lvl; st.sb = bl.sb; st.bb = bl.bb;
+
+  st.handNumber = (st.handNumber || 0) + 1;
+  st.community = [];
+  st.deck = freshDeck();
+  st.revealCards = false;
+  st.winnerIds = [];
+  st.handNames = {};
+  st.runout = false;
+  st.nextStreetAt = null;
+  st.handoverAt = null;
+
+  var lg = ["====== 핸드 #" + st.handNumber + " (L" + (lvl+1) + ": " + bl.sb.toLocaleString() + "/" + bl.bb.toLocaleString() + ") ======"].concat(st.log || []);
+  if (levelChanged) lg.unshift("📈 블라인드 상승! 레벨 " + (lvl+1) + ": " + bl.sb.toLocaleString() + " / " + bl.bb.toLocaleString());
+  st.log = lg.slice(0, 60);
+
+  st.players.forEach(function (p) {
+    p.cards = []; p.betThisRound = 0; p.totalBetThisHand = 0; p.hasActed = false;
+    /* waiting(미준비/중간참여 대기) 은 건드리지 않는다 — 이번 핸드 미참가 */
+    if (p.status !== "out" && p.status !== "waiting") p.status = "active";
+  });
+
+  /* 실제 이번 핸드 참가자 = active */
+  var seated = st.players.filter(function (p) { return p.status === "active"; });
+  if (seated.length < 2) {
+    /* 준비자가 부족하면 대기자까지 모두 참가시킨다 (안전장치) */
+    st.players.forEach(function (p) { if (p.status === "waiting" && p.stack > 0) p.status = "active"; });
+    seated = st.players.filter(function (p) { return p.status === "active"; });
+    if (seated.length < 2) { st.stage = "gameover"; return st; }
+  }
+
+  var prev = (st.dealerSeat === undefined || st.dealerSeat === null) ? -1 : st.dealerSeat;
+  var dealer = nextSeat(st, prev, { actableOnly: true });
+  if (!dealer) dealer = seated[0];
+  st.dealerSeat = dealer.seat;
+
+  var order = [], s = dealer.seat, n = st.players.length;
+  for (var i = 0; i < n; i++) {
+    s = (s + 1) % n;
+    var p = findBySeat(st, s);
+    if (p && p.status === "active") order.push(p);
+  }
+
+  function post(pl, amt) {
+    var real = Math.min(amt, pl.stack);
+    pl.stack -= real; pl.betThisRound = real; pl.totalBetThisHand = real;
+    if (pl.stack === 0) pl.status = "allin";
+  }
+
+  var sbP, bbP, first;
+  if (order.length === 2) { sbP = dealer; bbP = order[0]; first = dealer; }
+  else { sbP = order[0]; bbP = order[1]; first = order[2]; }
+
+  post(sbP, bl.sb);
+  post(bbP, bl.bb);
+  st.sbSeat = sbP.seat;
+  st.bbSeat = bbP.seat;
+
+  order.forEach(function (pl) { pl.cards = [st.deck.pop(), st.deck.pop()]; });
+
+  st.currentBet = bl.bb;
+  st.minRaise = bl.bb;
+  st.lastAggressorId = bbP.id;
+  st.stage = "preflop";
+
+  if (first && first.status === "active") setTurn(st, first.id);
+  else { setTurn(st, null); advanceState(st); }
+  return st;
+}
+
+function normalizeRoom(d) {
+  if (!d) return null;
+  return {
+    stage: d.stage || "lobby",
+    players: toArr(d.players).map(function (p) {
+      return {
+        id: p.id, name: p.name, stack: p.stack, seat: p.seat,
+        status: p.status || "waiting",
+        ready: !!p.ready,
+        joinedAt: typeof p.joinedAt === "number" ? p.joinedAt : Date.now(),
+        cards: p.cards || [],
+        betThisRound: p.betThisRound || 0,
+        totalBetThisHand: p.totalBetThisHand || 0,
+        hasActed: !!p.hasActed,
+        timeoutStreak: p.timeoutStreak || 0,
+        finishRank: p.finishRank || null
+      };
+    }),
+    community: toArr(d.community), deck: toArr(d.deck), log: toArr(d.log),
+    handNumber: d.handNumber || 0,
+    dealerSeat: d.dealerSeat === undefined ? -1 : d.dealerSeat,
+    sbSeat: d.sbSeat === undefined ? -1 : d.sbSeat,
+    bbSeat: d.bbSeat === undefined ? -1 : d.bbSeat,
+    currentBet: d.currentBet || 0, minRaise: d.minRaise || 200,
+    currentTurnId: d.currentTurnId || null,
+    turnDeadline: d.turnDeadline || null,
+    lastAggressorId: d.lastAggressorId || null,
+    revealCards: !!d.revealCards,
+    winnerIds: d.winnerIds || [],
+    handNames: d.handNames || {},
+    runout: !!d.runout,
+    nextStreetAt: d.nextStreetAt || null,
+    handoverAt: d.handoverAt || null,
+    handoverDelay: d.handoverDelay || HANDOVER_QUICK_MS,
+    allReadyAt: d.allReadyAt || null,
+    chat: toArr(d.chat).map(function (m) {
+      return { id: m.id, name: m.name, text: m.text, at: m.at || 0, sys: !!m.sys };
+    }),
+    tournamentStartAt: d.tournamentStartAt || null,
+    level: d.level === undefined ? 0 : d.level,
+    sb: d.sb || 100, bb: d.bb || 200
+  };
+}
+function emptyRoom() {
+  return {
+    stage: "lobby", players: [], community: [], deck: [], log: [],
+    handNumber: 0, dealerSeat: -1, sbSeat: -1, bbSeat: -1,
+    currentBet: 0, minRaise: 200, currentTurnId: null, turnDeadline: null,
+    lastAggressorId: null, revealCards: false, winnerIds: [], handNames: {},
+    runout: false, nextStreetAt: null, handoverAt: null, handoverDelay: HANDOVER_QUICK_MS,
+    allReadyAt: null, chat: [], tournamentStartAt: null, level: 0, sb: 100, bb: 200
+  };
+}
+
+function applyAction(cur, pid, type, amount) {
+  var p = findById(cur, pid);
+  if (!p || p.status !== "active") return null;
+
+  if (type === "fold") {
+    p.status = "folded"; p.hasActed = true;
+    cur.log.unshift(p.name + ": 폴드");
+  } else if (type === "check") {
+    if (p.betThisRound !== cur.currentBet) return null;
+    p.hasActed = true;
+    cur.log.unshift(p.name + ": 체크");
+  } else if (type === "call") {
+    var toCall = Math.min(cur.currentBet - p.betThisRound, p.stack);
+    p.stack -= toCall; p.betThisRound += toCall; p.totalBetThisHand += toCall;
+    p.hasActed = true;
+    if (p.stack === 0) p.status = "allin";
+    cur.log.unshift(p.name + ": 콜 (" + p.betThisRound.toLocaleString() + ")");
+  } else if (type === "raise" || type === "allin") {
+    var target = (type === "allin") ? (p.betThisRound + p.stack) : amount;
+    target = Math.min(target, p.betThisRound + p.stack);
+    var rs = target - cur.currentBet;
+    var add = target - p.betThisRound;
+    if (add <= 0) return null;
+    p.stack -= add; p.betThisRound = target; p.totalBetThisHand += add;
+    p.hasActed = true;
+    if (p.stack === 0) p.status = "allin";
+    var isRaise = target > cur.currentBet;
+    if (isRaise) {
+      cur.minRaise = Math.max(rs, cur.minRaise);
+      cur.currentBet = target;
+      cur.lastAggressorId = p.id;
+      cur.players.forEach(function (o) { if (o.id !== p.id && o.status === "active") o.hasActed = false; });
+    }
+    cur.log.unshift(p.name + ": " + (p.status === "allin" ? "올인" : (isRaise ? "레이즈" : "콜")) + " (" + target.toLocaleString() + ")");
+  } else return null;
+
+  cur.log = cur.log.slice(0, 60);
+  return advanceState(cur);
+}
+
+function primaryDriverId(r) {
+  var alive = r.players.filter(function (p) { return p.status !== "out"; })
+    .sort(function (a, b) { return a.seat - b.seat; });
+  return alive.length ? alive[0].id : null;
+}
+
+/* ========== [4] 홀덤 설명 카드뉴스 데이터 ========== */
+var GUIDE_SLIDES = [
+  {
+    icon: "♠",
+    title: "텍사스 홀덤이란?",
+    lines: [
+      "각자 받은 개인 카드 2장과",
+      "테이블에 공개되는 공유 카드 5장을 조합해",
+      "가장 강한 5장의 패를 만드는 게임입니다.",
+      "",
+      "상대의 칩을 모두 가져오면 승리! 🏆"
+    ]
+  },
+  {
+    icon: "🃏",
+    title: "게임 진행 순서",
+    lines: [
+      "① 프리플롭 — 개인 카드 2장을 받고 첫 베팅",
+      "② 플랍 — 공유 카드 3장 공개 후 베팅",
+      "③ 턴 — 공유 카드 1장 추가 후 베팅",
+      "④ 리버 — 마지막 1장 공개 후 최종 베팅",
+      "⑤ 쇼다운 — 남은 사람끼리 패를 공개해 승부!"
+    ]
+  },
+  {
+    icon: "💰",
+    title: "액션의 종류",
+    lines: [
+      "체크 — 베팅 없이 차례 넘기기 (앞에 베팅이 없을 때)",
+      "콜 — 상대 베팅만큼 따라가기",
+      "레이즈 — 상대 베팅보다 더 올리기",
+      "폴드 — 이번 판 포기하기",
+      "올인 — 가진 칩 전부 걸기 🔥",
+      "",
+      "⏱ 내 차례에 10초 안에 선택해야 해요!"
+    ]
+  },
+  {
+    icon: "👑",
+    title: "족보 (높은 순서)",
+    lines: [
+      "스트레이트 플러시 > 포카드 > 풀하우스",
+      "> 플러시 > 스트레이트 > 트리플",
+      "> 투페어 > 원페어 > 하이카드",
+      "",
+      "같은 족보면 숫자가 높은 쪽이 이겨요.",
+      "A(에이스)가 가장 높은 카드입니다."
+    ]
+  },
+  {
+    icon: "🏁",
+    title: "우리 토너먼트 룰",
+    lines: [
+      "시작 칩 30,000 · 최대 9명",
+      "블라인드는 5분마다 상승 (100/200부터)",
+      "칩을 다 잃으면 탈락, 리바이 없음",
+      "중간 참여 가능 · 항복 버튼으로 기권 가능",
+      "",
+      "마지막 1명이 남을 때까지! 🏆"
+    ]
+  }
+];
+
+function App() {
+  var a = useState(null); var me = a[0], setMe = a[1];
+  var b = useState(""); var nameInput = b[0], setNameInput = b[1];
+  var c = useState(null); var room = c[0], setRoom = c[1];
+  var d = useState(""); var raiseInput = d[0], setRaiseInput = d[1];
+  var e = useState(true); var loading = e[0], setLoading = e[1];
+  var f = useState(null); var connError = f[0], setConnError = f[1];
+  var g = useState(0); var setTick = g[1];
+  var h = useState(null); var screen = h[0], setScreen = h[1];   // null(테이블) | guide | wait
+  var nk = useState(""); var nick = nk[0], setNick = nk[1];      // 유지되는 닉네임
+  var bg = useState(window.BGM ? window.BGM.isEnabled() : true); var bgmOn = bg[0], setBgmOn = bg[1];
+  var gi = useState(0); var guideIdx = gi[0], setGuideIdx = gi[1];
+  var mu = useState(SFX.isMuted()); var muted = mu[0], setMutedUI = mu[1];
+  var ci = useState(""); var chatInput = ci[0], setChatInput = ci[1];
+  var chatEndRef = useRef(null);
+
+  var turnRef = useRef(null), runRef = useRef(null), handRef = useRef(null), startRef = useRef(null);
+  var kickRef = useRef(null), selfLeavingRef = useRef(false), autoJoinRef = useRef(false);
+  var prevStageRef = useRef("lobby");
+  var roomRef = useRef(null), meRef = useRef(null);
+  var prevRoomRef = useRef(null), beepRef = useRef("");
+  roomRef.current = room; meRef.current = me;
+
+  /* 상태 변화를 비교해 어울리는 효과음 재생 */
+  function triggerSounds(pr, nr) {
+    var m = meRef.current;
+    /* 새 핸드 → 카드 딜링 사운드 (인원수만큼 스타카토) */
+    if (nr.handNumber > pr.handNumber && nr.stage === "preflop") {
+      var cnt = Math.min(inHandPlayers(nr).length * 2, 18);
+      for (var i = 0; i < cnt; i++) SFX.deal(i * 0.085);
+    }
+    /* 커뮤니티 카드 오픈 → 플립 */
+    if (nr.community.length > pr.community.length) {
+      var added = nr.community.length - pr.community.length;
+      for (var j = 0; j < added; j++) SFX.flip(j * 0.16);
+    }
+    /* 올인 런아웃 돌입 */
+    if (nr.runout && !pr.runout) SFX.allin();
+    /* 승자 확정 */
+    if ((nr.winnerIds || []).length > 0 && (pr.winnerIds || []).length === 0) SFX.win();
+    /* 레벨 상승 */
+    if (nr.level > pr.level) SFX.levelup();
+    /* 내 차례 알림 */
+    if (m && nr.currentTurnId === m.id && pr.currentTurnId !== m.id && !nr.runout &&
+        nr.stage !== "handover" && nr.stage !== "gameover") SFX.myTurn();
+    /* 액션 사운드 (로그 첫 줄 변화 감지) */
+    var nl = (nr.log || [])[0], pl = (pr.log || [])[0];
+    if (nl && nl !== pl) {
+      if (nl.indexOf("폴드") >= 0) SFX.fold();
+      else if (nl.indexOf("체크") >= 0) SFX.check();
+      else if (nl.indexOf("올인") >= 0 && nl.indexOf("🔥") < 0) SFX.allin();
+      else if (nl.indexOf("콜") >= 0 || nl.indexOf("레이즈") >= 0) SFX.chip();
+    }
+  }
+
+  useEffect(function () {
+    var saved = localStorage.getItem(ID_KEY);
+    var savedMe = null;
+    if (saved) { try { savedMe = JSON.parse(saved); setMe(savedMe); } catch (x) {} }
+
+    /* 닉네임 복원 (좌석이 없어도 유지) */
+    var savedNick = "";
+    try { savedNick = localStorage.getItem(NICK_KEY) || ""; } catch (x) {}
+    if (!savedNick && savedMe && savedMe.name) {
+      savedNick = savedMe.name;
+      try { localStorage.setItem(NICK_KEY, savedNick); } catch (x) {}
+    }
+    if (savedNick) setNick(savedNick);
+
+    if (!db) { setLoading(false); return; }
+
+    /* 브라우저 자동재생 정책 대응: 첫 터치/클릭 시 오디오 활성화 */
+    var unlock = function () {
+      SFX.unlock();
+      if (window.BGM) window.BGM.kick();   /* 배경음악 자동재생 차단 해제 */
+    };
+    document.addEventListener("pointerdown", unlock);
+    document.addEventListener("keydown", unlock);
+
+    var ref = db.ref(ROOM_PATH);
+    var lis = ref.on("value", function (snap) {
+      var nr = normalizeRoom(snap.val());
+      var pr = prevRoomRef.current;
+      if (pr && nr) { try { triggerSounds(pr, nr); } catch (x) {} }
+      /* 내 좌석이 사라졌는지 감지 (본인이 직접 나간 경우는 제외) */
+      var myId = meRef.current && meRef.current.id;
+      if (myId && pr && nr && findById(pr, myId) && !findById(nr, myId) && !selfLeavingRef.current) {
+        if (pr.stage === "lobby" && nr.stage === "lobby" && nr.players.length > 0) {
+          alert("⏱️ 30분 이상 준비를 완료하지 않아 대기실에서 자동 퇴장되었습니다.");
+        } else if (pr.stage === "lobby" && nr.stage !== "lobby" && nr.stage !== "gameover") {
+          alert("🪑 준비를 완료하지 않아 이번 게임에서 제외되었습니다.\n대기실에서 '중간 참여하기'로 합류할 수 있어요.");
+        }
+        try { localStorage.removeItem(ID_KEY); } catch (x) {}
+        setMe(null);
+        setScreen("wait");   /* 닉네임은 유지한 채 대기실로 */
+      }
+      selfLeavingRef.current = false;
+      prevRoomRef.current = nr;
+      setRoom(nr); setLoading(false); setConnError(null);
+    }, function (err) {
+      setLoading(false); setConnError("데이터베이스 접근 오류: " + (err.message || err));
+    });
+    var tk = setInterval(function () {
+      setTick(function (t) { return t + 1; });
+      tickTurnTimeout();
+      tickRunout();
+      tickAutoNextHand();
+      tickAutoStart();
+      tickLobbyKick();
+      tickCountdownBeep();
+    }, 400);
+    return function () {
+      ref.off("value", lis); clearInterval(tk);
+      document.removeEventListener("pointerdown", unlock);
+      document.removeEventListener("keydown", unlock);
+    };
+  }, []);
+
+  /* 채팅 새 메시지 도착 시 맨 아래로 스크롤 */
+  useEffect(function () {
+    var el = document.getElementById("chatLog");
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [room && room.chat ? room.chat.length : 0]);
+
+  /* [2] 배경음악은 '테이블 밖' 화면에서만 재생 (게임 중엔 효과음이 들려야 하므로 정지) */
+  var stageNow = room ? room.stage : "lobby";
+  var seatedNow = !!(me && room && findById(room, me.id));
+  var musicScreen = (!nick) || screen === "guide" || screen === "wait" ||
+                    !seatedNow || stageNow === "lobby" || stageNow === "gameover";
+  useEffect(function () {
+    if (window.BGM) window.BGM.setActive(musicScreen);
+  }, [musicScreen]);
+
+  function toggleBgm() {
+    if (!window.BGM) return;
+    var v = !window.BGM.isEnabled();
+    window.BGM.setEnabled(v);
+    setBgmOn(v);
+  }
+
+  /* [1] 대기실 진입 시 로비면 자동 착석 (별도의 '테이블 입장' 페이지 제거) */
+  var nickTaken = !!(room && nick && room.players.some(function (p) {
+    return p.name === nick && p.status !== "out";
+  }));
+  var canAutoSeat = !!nick && !seatedNow && !nickTaken &&
+                    !!room && room.stage === "lobby" &&
+                    alivePlayers(room).length < MAX_PLAYERS;
+  useEffect(function () {
+    if (canAutoSeat && !autoJoinRef.current) {
+      autoJoinRef.current = true;
+      joinTable(nick);
+    }
+    if (!canAutoSeat) autoJoinRef.current = false;
+  }, [canAutoSeat, nick]);
+
+  /* 로비 → 게임 시작 시, 대기실에 있던 착석자를 자동으로 테이블로 이동 */
+  useEffect(function () {
+    var prev = prevStageRef.current;
+    prevStageRef.current = stageNow;
+    if (prev === "lobby" && stageNow !== "lobby" && stageNow !== "gameover" &&
+        seatedNow && screen === "wait") {
+      setScreen(null);
+    }
+  }, [stageNow, seatedNow]);
+
+  /* 어떤 이유로든 내 닉네임의 좌석만 남고 신원이 끊겼을 때 자가 복구 */
+  function reclaimSeat() {
+    var st = roomRef.current;
+    if (!st || !nick) return;
+    var orphan = null;
+    for (var i = 0; i < st.players.length; i++) {
+      if (st.players[i].name === nick && st.players[i].status !== "out") { orphan = st.players[i]; break; }
+    }
+    if (!orphan) return;
+    try { localStorage.setItem(ID_KEY, JSON.stringify({ id: orphan.id, name: orphan.name })); } catch (e) {}
+    setMe({ id: orphan.id, name: orphan.name });
+    setScreen("wait");
+  }
+
+  /* [1] 대기실 좌측 상단 '← 이전' — 닉네임 설정 화면으로 */
+  function backToStart() {
+    var st = roomRef.current;
+    var seated = !!(st && me && findById(st, me.id));
+    var inLobby = !!(st && st.stage === "lobby");
+
+    var msg;
+    if (seated && inLobby) {
+      msg = "대기실에서 나가시겠습니까?\n\n닉네임이 삭제되고 대기 목록에서도 제거됩니다.";
+    } else if (seated) {
+      msg = "닉네임 설정 화면으로 돌아갈까요?\n\n닉네임이 삭제됩니다.\n(테이블에 남은 내 자리는 자동 체크/폴드로 처리됩니다)";
+    } else {
+      msg = "닉네임 설정 화면으로 돌아갈까요?\n\n닉네임이 삭제됩니다.";
+    }
+    if (!confirm(msg)) return;
+
+    var myId = me ? me.id : null;
+
+    /* 먼저 로컬 신원/닉네임을 지운다.
+       (좌석 제거보다 뒤에 하면, 그 사이 자동 착석 이펙트가 다시 앉혀버린다) */
+    changeNickname();
+
+    /* 로비였다면 대기 목록에서도 내 자리를 제거 */
+    if (myId && inLobby) {
+      freshRoomRead()
+        .then(function (cur) {
+          if (!cur || cur.stage !== "lobby") return;
+          cur.players = cur.players.filter(function (p) { return p.id !== myId; });
+          cur.players.sort(function (x, y) { return x.seat - y.seat; });
+          cur.players.forEach(function (p, i) { p.seat = i; });
+          var rc = cur.players.filter(function (x) { return x.ready; }).length;
+          cur.allReadyAt = rc >= MIN_READY_TO_START ? (cur.allReadyAt || Date.now()) : null;
+          return saveRoom(cur);
+        })
+        .catch(function () {});
+    }
+  }
+
+  /* 내 차례 3초 이하 카운트다운 비프 */
+  function tickCountdownBeep() {
+    var r = roomRef.current, m = meRef.current;
+    if (!r || !m || !r.turnDeadline || r.currentTurnId !== m.id || r.runout) return;
+    if (r.stage === "handover" || r.stage === "gameover" || r.stage === "lobby") return;
+    var left = Math.ceil((r.turnDeadline - Date.now()) / 1000);
+    if (left >= 1 && left <= 3) {
+      var key = left + "@" + r.turnDeadline;
+      if (beepRef.current !== key) { beepRef.current = key; SFX.tick(); }
+    }
+  }
+
+  function toggleMute() {
+    var m = !SFX.isMuted();
+    SFX.setMuted(m);
+    setMutedUI(m);
+  }
+
+  function freshRoomRead() { return db.ref(ROOM_PATH).get().then(function (s) { return normalizeRoom(s.val()); }); }
+  /* 채팅 노드에만 안전하게 append (트랜잭션 → 동시 전송에도 유실 없음) */
+  function chatAppend(msg) {
+    return db.ref(ROOM_PATH + "/chat").transaction(function (cur) {
+      var arr = toArr(cur);
+      arr.push(msg);
+      if (arr.length > 60) arr = arr.slice(arr.length - 60);
+      return arr;
+    });
+  }
+
+  /* 게임 상태 저장: chat 노드는 건드리지 않는다.
+     (update() 사용 → 채팅이 게임 상태 저장에 덮어써지지 않음) */
+  function saveRoom(next) {
+    var sys = next.__sys || null;
+    var payload = {};
+    Object.keys(next).forEach(function (k) {
+      if (k !== "chat" && k !== "__sys") payload[k] = next[k];
+    });
+    return db.ref(ROOM_PATH).update(payload)
+      .then(function () {
+        if (!sys || !sys.length) return;
+        /* 예약된 시스템 공지를 채팅에 순차 append */
+        return sys.reduce(function (chain, t) {
+          return chain.then(function () {
+            return chatAppend({
+              id: "sys-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+              name: "📢 시스템", text: t, at: Date.now(), sys: true
+            });
+          });
+        }, Promise.resolve());
+      })
+      .catch(function (err) { setConnError("저장 실패: " + (err.message || err)); });
+  }
+
+  /* 테이블 전체 초기화(채팅 포함) */
+  function saveRoomFull(next) {
+    var payload = {};
+    Object.keys(next).forEach(function (k) { if (k !== "__sys") payload[k] = next[k]; });
+    return db.ref(ROOM_PATH).set(payload).catch(function (err) { setConnError("저장 실패: " + (err.message || err)); });
+  }
+  function myDriveDelay(r) {
+    if (!meRef.current) return BACKUP_DELAY_MS;
+    return primaryDriverId(r) === meRef.current.id ? 0 : BACKUP_DELAY_MS;
+  }
+  function shouldAttempt(ref, key) {
+    var now = Date.now();
+    if (ref.current && ref.current.key === key && now - ref.current.at < 2500) return false;
+    ref.current = { key: key, at: now };
+    return true;
+  }
+
+  function tickTurnTimeout() {
+    var r = roomRef.current, m = meRef.current;
+    if (!r || !m || !db || !r.currentTurnId || !r.turnDeadline) return;
+    if (r.stage === "lobby" || r.stage === "handover" || r.stage === "gameover" || r.runout) return;
+
+    var grace = (r.currentTurnId === m.id) ? 0 : BACKUP_DELAY_MS;
+    if (Date.now() < r.turnDeadline + grace) return;
+    if (!shouldAttempt(turnRef, "T" + r.currentTurnId + "@" + r.turnDeadline)) return;
+
+    freshRoomRead().then(function (cu) {
+      if (!cu || cu.currentTurnId !== r.currentTurnId || cu.turnDeadline !== r.turnDeadline) return;
+      if (Date.now() < cu.turnDeadline) return;
+      var p = findById(cu, cu.currentTurnId);
+      if (!p || p.status !== "active") return;
+
+      /* [4] 연속 시간초과 카운트 */
+      p.timeoutStreak = (p.timeoutStreak || 0) + 1;
+
+      if (p.timeoutStreak >= MAX_TIMEOUT_STREAK) {
+        /* 10회 연속 → 강제 항복 */
+        var pname = p.name;
+        cu.log.unshift("🏳️ " + pname + " " + MAX_TIMEOUT_STREAK + "회 연속 시간초과 — 강제 항복");
+        pushSystemChat(cu, pname + "님이 " + MAX_TIMEOUT_STREAK + "회 연속 시간초과로 강제 항복 처리되었습니다.");
+        var nx2 = surrender(cu, p.id);
+        if (nx2) return saveRoom(nx2);
+        return;
+      }
+
+      var canCheck = p.betThisRound === cu.currentBet;
+      cu.log.unshift("⏰ " + p.name + " 시간 초과 (" + p.timeoutStreak + "/" + MAX_TIMEOUT_STREAK + ")");
+      var nx = applyAction(cu, p.id, canCheck ? "check" : "fold");
+      if (nx) return saveRoom(nx);
+    });
+  }
+
+  function tickRunout() {
+    var r = roomRef.current, m = meRef.current;
+    if (!r || !m || !db || !r.runout || !r.nextStreetAt) return;
+    if (Date.now() < r.nextStreetAt + myDriveDelay(r)) return;
+    if (!shouldAttempt(runRef, "R" + r.nextStreetAt)) return;
+
+    freshRoomRead().then(function (cu) {
+      if (!cu || !cu.runout || cu.nextStreetAt !== r.nextStreetAt) return;
+      if (Date.now() < cu.nextStreetAt) return;
+      return saveRoom(progressRunout(cu));
+    });
+  }
+
+  function tickAutoNextHand() {
+    var r = roomRef.current, m = meRef.current;
+    if (!r || !m || !db || r.stage !== "handover" || !r.handoverAt) return;
+    if (alivePlayers(r).length < 2) return;
+    if (Date.now() < r.handoverAt + r.handoverDelay + myDriveDelay(r)) return;
+    if (!shouldAttempt(handRef, "H" + r.handoverAt)) return;
+
+    freshRoomRead().then(function (cu) {
+      if (!cu || cu.stage !== "handover" || cu.handoverAt !== r.handoverAt) return;
+      return saveRoom(startHand(cu));
+    });
+  }
+
+  /* [3] 최소 인원 준비 완료 → 자동 시작 (전원 준비 불필요) */
+  function tickAutoStart() {
+    var r = roomRef.current, m = meRef.current;
+    if (!r || !m || !db || r.stage !== "lobby" || !r.allReadyAt) return;
+    var readyCount = r.players.filter(function (p) { return p.ready; }).length;
+    if (readyCount < MIN_READY_TO_START) return;
+    if (Date.now() < r.allReadyAt + AUTOSTART_DELAY_MS + myDriveDelay(r)) return;
+    if (!shouldAttempt(startRef, "S" + r.allReadyAt)) return;
+
+    freshRoomRead().then(function (cu) {
+      if (!cu || cu.stage !== "lobby" || cu.allReadyAt !== r.allReadyAt) return;
+      var curReadyCount = cu.players.filter(function (p) { return p.ready; }).length;
+      if (curReadyCount < MIN_READY_TO_START) return;
+
+      /* [1] 준비하지 않은 인원은 좌석에서 제외 → 대기실에서 '중간 참여하기'로만 합류 가능 */
+      var benched = cu.players.filter(function (p) { return !p.ready; }).map(function (p) { return p.name; });
+      cu.players = cu.players.filter(function (p) { return p.ready; });
+      cu.players.sort(function (x, y) { return x.seat - y.seat; });
+      cu.players.forEach(function (p, i) { p.seat = i; });
+      if (benched.length > 0) {
+        cu.log.unshift("🪑 미준비 인원 제외: " + benched.join(", ") + " (중간 참여 가능)");
+        pushSystemChat(cu, benched.join(", ") + "님은 준비하지 않아 이번 게임에서 제외되었습니다. '중간 참여하기'로 합류할 수 있어요.");
+      }
+
+      cu.tournamentStartAt = Date.now();
+      cu.handNumber = 0;
+      cu.dealerSeat = -1;
+      cu.allReadyAt = null;
+      return saveRoom(startHand(cu));
+    });
+  }
+
+  /* [5] 대기실에서 30분 이상 준비완료 안 한 사람 자동 퇴장 */
+  function tickLobbyKick() {
+    var r = roomRef.current, m = meRef.current;
+    if (!r || !m || !db || r.stage !== "lobby") return;
+    var now = Date.now();
+    var expired = r.players.filter(function (p) {
+      return !p.ready && typeof p.joinedAt === "number" && now - p.joinedAt >= LOBBY_READY_TIMEOUT_MS;
+    });
+    if (expired.length === 0) return;
+    var earliest = expired.reduce(function (a, b) { return a.joinedAt < b.joinedAt ? a : b; });
+    if (now < earliest.joinedAt + LOBBY_READY_TIMEOUT_MS + myDriveDelay(r)) return;
+    var key = "K" + expired.map(function (p) { return p.id; }).sort().join(",");
+    if (!shouldAttempt(kickRef, key)) return;
+
+    freshRoomRead().then(function (cu) {
+      if (!cu || cu.stage !== "lobby") return;
+      var now2 = Date.now();
+      var kickedNames = [];
+      cu.players = cu.players.filter(function (p) {
+        var isExpired = !p.ready && typeof p.joinedAt === "number" && now2 - p.joinedAt >= LOBBY_READY_TIMEOUT_MS;
+        if (isExpired) kickedNames.push(p.name);
+        return !isExpired;
+      });
+      if (kickedNames.length === 0) return;
+      cu.players.sort(function (x, y) { return x.seat - y.seat; });
+      cu.players.forEach(function (p, i) { p.seat = i; });
+      cu.log.unshift("⏱️ " + kickedNames.join(", ") + " 님이 30분 이상 미준비로 자동 퇴장되었습니다.");
+      cu.log = cu.log.slice(0, 60);
+      return saveRoom(cu);
+    });
+  }
+
+  function joinTable(nameArg) {
+    var nm = String(nameArg || nameInput || "").trim();
+    if (!nm) return;
+    freshRoomRead().then(function (cur) {
+      cur = cur || emptyRoom();
+      if (cur.stage === "gameover") { alert("토너먼트가 종료되었습니다. 잠시 후 다시 시도해주세요."); return; }
+      if (alivePlayers(cur).length >= MAX_PLAYERS) { alert("정원(" + MAX_PLAYERS + "명)이 가득 찼습니다."); return; }
+      if (cur.players.some(function (p) { return p.name === nm && p.status !== "out"; })) {
+        alert("이미 사용 중인 이름입니다."); return;
+      }
+      var id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ("id-" + Math.random().toString(36).slice(2) + Date.now());
+      try {
+        localStorage.setItem(ID_KEY, JSON.stringify({ id: id, name: nm }));
+        localStorage.setItem(NICK_KEY, nm);   /* 닉네임은 좌석과 별개로 보관 */
+      } catch (e) {}
+      setMe({ id: id, name: nm });
+      setNick(nm);
+      /* 로비면 대기실에 머무르고, 게임 중이면 테이블로 진입 */
+      setScreen(cur.stage === "lobby" ? "wait" : null);
+
+      var midGame = cur.stage !== "lobby";
+      var maxSeat = -1;
+      cur.players.forEach(function (p) { if (p.seat > maxSeat) maxSeat = p.seat; });
+      cur.players.push({
+        id: id, name: nm, stack: STARTING_STACK, seat: maxSeat + 1,
+        status: "waiting", ready: false, joinedAt: Date.now(), cards: [], betThisRound: 0, totalBetThisHand: 0,
+        hasActed: false, timeoutStreak: 0, finishRank: null
+      });
+      var readyCountJoin = cur.players.filter(function (x) { return x.ready; }).length;
+      cur.allReadyAt = readyCountJoin >= MIN_READY_TO_START ? (cur.allReadyAt || Date.now()) : null;
+      if (midGame) {
+        var lv = currentLevelIdx(cur.tournamentStartAt) + 1;
+        cur.log.unshift("🪑 " + nm + "님 중간 참여 (L" + lv + ", 다음 핸드부터)");
+        cur.log = cur.log.slice(0, 60);
+      }
+      return saveRoom(cur);
+    });
+  }
+
+  /* [3] 준비 토글 */
+  function toggleReady() {
+    freshRoomRead().then(function (cur) {
+      if (!cur || !me || cur.stage !== "lobby") return;
+      var p = findById(cur, me.id);
+      if (!p) return;
+      p.ready = !p.ready;
+      if (!p.ready) p.joinedAt = Date.now();
+      var readyCount = cur.players.filter(function (x) { return x.ready; }).length;
+      var canStart = readyCount >= MIN_READY_TO_START;
+      cur.allReadyAt = canStart ? (cur.allReadyAt || Date.now()) : null;
+      return saveRoom(cur);
+    });
+  }
+
+  /* [3] 로비 뒤로가기 (테이블에서 나가기) */
+
+
+  /* [1] 채팅 전송 (좌석이 없어도 닉네임만 있으면 가능) */
+  /* 채팅 전송 — 채팅 노드에만 쓰므로 진행 중인 핸드 상태를 절대 덮어쓰지 않는다 */
+  function sendChat() {
+    var txt = chatInput.trim();
+    var who = (me && me.name) || nick;
+    if (!txt || !who) return;
+    setChatInput("");
+    chatAppend({
+      id: who + "-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+      name: who,
+      text: txt.slice(0, 120),
+      at: Date.now()
+    }).catch(function () {});
+  }
+
+  /* [1] 좌석을 떠나 '대기실'로 이동. 닉네임은 그대로 유지한다.
+     keepSeat=true 면 좌석 정보(me)를 남겨 '테이블로 돌아가기'가 가능하다. */
+  function goWaitingRoom(keepSeat) {
+    if (!keepSeat) {
+      selfLeavingRef.current = true;
+      try { localStorage.removeItem(ID_KEY); } catch (e) {}
+      setMe(null);
+    }
+    setChatInput("");
+    setRaiseInput("");
+    setGuideIdx(0);
+    setScreen("wait");
+  }
+
+  /* 첫 화면에서 닉네임 확정 → 대기실 (로비면 자동 착석) */
+  function enterWaitingRoom() {
+    var nm = nameInput.trim();
+    if (!nm) return;
+    var st = roomRef.current;
+    if (st && st.players.some(function (p) { return p.name === nm && p.status !== "out"; })) {
+      alert("이미 사용 중인 닉네임입니다. 다른 닉네임을 입력해주세요.");
+      return;
+    }
+    try { localStorage.setItem(NICK_KEY, nm); } catch (e) {}
+    setNick(nm);
+    setScreen("wait");
+    if (window.BGM) window.BGM.kick();
+  }
+
+  /* 닉네임을 바꾸고 싶을 때만 첫 화면으로 */
+  function changeNickname() {
+    selfLeavingRef.current = true;
+    try { localStorage.removeItem(ID_KEY); localStorage.removeItem(NICK_KEY); } catch (e) {}
+    setMe(null);
+    setNick("");
+    setNameInput("");
+    setChatInput("");
+    setScreen(null);
+  }
+
+  /* [2] 인게임 나가기 → 대기실 (닉네임 유지)
+     - 생존자 3명 이상: DB를 건드리지 않는다. 좌석을 남겨 언제든 복귀 가능.
+     - 생존자 2명(헤즈업): 남은 한 명이 최종 우승자로 확정되므로 항복 처리 후 종료. */
+  function leaveGame() {
+    var r = roomRef.current;
+    if (!r || !me) { goWaitingRoom(false); return; }
+
+    var meNow = findById(r, me.id);
+    var isAlive = meNow && meNow.status !== "out";
+
+    if (!isAlive) {
+      if (!confirm("관전을 종료하고 대기실로 이동할까요?")) return;
+      goWaitingRoom(false);
+      return;
+    }
+
+    var aliveCount = alivePlayers(r).length;
+    var isHeadsUp = aliveCount <= 2;
+
+    var msg = isHeadsUp
+      ? "대기실로 나가시겠습니까?\n\n" +
+        "현재 2명만 남아 있어, 나가면 상대방이 최종 우승자로 확정되고\n" +
+        "토너먼트가 종료됩니다."
+      : "대기실로 나가시겠습니까?\n\n" +
+        "진행 중인 게임은 그대로 계속됩니다.\n" +
+        "내 자리는 차례가 오면 시간 초과로 자동 체크/폴드 처리되며,\n" +
+        "대기실에서 언제든 다시 돌아올 수 있습니다.\n\n" +
+        "즉시 기권하려면 '🏳️ 항복' 버튼을 눌러주세요.";
+    if (!confirm(msg)) return;
+
+    /* 3명 이상 → DB 쓰기 없음. 좌석 유지 → 복귀 가능 */
+    if (!isHeadsUp) { goWaitingRoom(true); return; }
+
+    /* 2명 → 상대 우승 확정 후 종료 */
+    var myId = me.id;
+    selfLeavingRef.current = true;
+
+    freshRoomRead()
+      .then(function (cur) {
+        if (!cur) return;
+        var meCur = findById(cur, myId);
+        if (!meCur || meCur.status === "out") return;
+        /* 최신 상태 재확인: 그 사이 누가 합류해 3명 이상이 됐다면 건드리지 않는다 */
+        if (alivePlayers(cur).length > 2) return;
+        var nx = surrender(cur, myId);
+        if (nx) return saveRoom(nx);
+      })
+      .catch(function () { /* 저장 실패해도 화면 이동은 진행 */ })
+      .then(function () { goWaitingRoom(false); });
+  }
+
+  function forceNextHand() {
+    freshRoomRead().then(function (cur) {
+      if (!cur || cur.stage !== "handover") return;
+      return saveRoom(startHand(cur));
+    });
+  }
+  function doSurrender() {
+    var r = roomRef.current;
+    var alive = alivePlayers(r).length;
+    var msg = alive <= 2
+      ? "항복하시겠습니까?\n상대방이 우승자가 되고 토너먼트가 종료됩니다."
+      : "항복하시겠습니까?\n지금 순위(" + alive + "위)로 게임에서 나가게 됩니다.";
+    if (!confirm(msg)) return;
+    var myId = me ? me.id : null;
+    selfLeavingRef.current = true;
+    freshRoomRead()
+      .then(function (cur) {
+        if (!cur || !myId) return;
+        var nx = surrender(cur, myId);
+        if (nx) return saveRoom(nx);
+      })
+      .catch(function () {})
+      .then(function () { goWaitingRoom(false); });   /* [1] 항복 후 대기실로 */
+  }
+  function newTournament() {
+    if (!confirm("새 토너먼트를 준비할까요?\n(이전 결과가 사라지고 대기실로 돌아갑니다)")) return;
+    selfLeavingRef.current = true;
+    try { localStorage.removeItem(ID_KEY); } catch (e) {}
+    setMe(null);
+    setChatInput("");
+    setRaiseInput("");
+    setGuideIdx(0);
+    setScreen("wait");
+    saveRoomFull(emptyRoom()).catch(function () {});
+  }
+  function resetTable() {
+    if (!confirm("정말 이 버튼을 누르면 게임이 리셋됩니다.\n진행 중인 핸드와 모든 참가자 정보가 사라지고 빈 테이블로 돌아갑니다.\n계속하시겠습니까?")) return;
+    /* 좌석 신원을 '먼저' 정리한 뒤 테이블을 비운다.
+       (순서가 반대면 비워지는 순간 자동 착석이 끼어들어 주인 없는 좌석이 남는다) */
+    selfLeavingRef.current = true;
+    try { localStorage.removeItem(ID_KEY); } catch (e) {}
+    setMe(null);
+    setChatInput("");
+    setRaiseInput("");
+    setGuideIdx(0);
+    setScreen("wait");
+    saveRoomFull(emptyRoom()).catch(function () {});
+    /* 빈 테이블이 되면 자동 착석 이펙트가 닉네임 그대로 다시 앉혀준다 */
+  }
+  /* [4] 게임 중 테이블 리셋: 진행 중인 게임을 초기화하고 전원 대기실로 이동 (참가자는 유지) */
+  function resetTableToLobby() {
+    if (!confirm("정말 이 버튼을 누르면 진행 중인 게임이 초기화됩니다.\n모든 참가자가 대기실로 이동합니다.\n계속하시겠습니까?")) return;
+    freshRoomRead().then(function (cur) {
+      if (!cur) return;
+      var fresh = emptyRoom();
+      fresh.players = cur.players.map(function (p) {
+        return {
+          id: p.id, name: p.name, stack: STARTING_STACK, seat: p.seat,
+          status: "waiting", ready: false, joinedAt: Date.now(), cards: [], betThisRound: 0, totalBetThisHand: 0,
+          hasActed: false, timeoutStreak: 0, finishRank: null
+        };
+      });
+      fresh.log = ["🔄 테이블이 리셋되어 전원 대기실로 이동했습니다."];
+      return saveRoom(fresh);
+    });
+  }
+  function doAction(type, amount) {
+    freshRoomRead().then(function (cur) {
+      if (!cur || !me || cur.currentTurnId !== me.id) return;
+      /* [4] 직접 액션하면 연속 시간초과 카운트 초기화 */
+      var mp = findById(cur, me.id);
+      if (mp) mp.timeoutStreak = 0;
+      var nx = applyAction(cur, me.id, type, amount);
+      setRaiseInput("");
+      if (nx) return saveRoom(nx);
+    });
+  }
+
+  /* [1][3] 채팅 패널 — 대기실/로비 공용, 07-10 18:54 형식의 시각 표시 */
+  function renderChat(compact) {
+    var myName = (me && me.name) || nick;
+    var msgs = (room && room.chat) || [];
+    return (
+      <div style={compact ? S.chatBoxCompact : S.chatBox}>
+        {!compact && <div style={S.chatTitle}>💬 채팅</div>}
+        <div style={compact ? S.chatLogCompact : S.chatLog} id="chatLog">
+          {msgs.length === 0 && <div style={S.chatEmpty}>대화를 시작해보세요</div>}
+          {msgs.map(function (msg) {
+            var mineMsg = msg.name === myName;
+            if (msg.sys) {
+              return (
+                <div key={msg.id} style={S.chatSysRow}>
+                  <span style={S.chatTime}>{fmtTime(msg.at)}</span>
+                  <span style={S.chatSysText}>{msg.text}</span>
+                </div>
+              );
+            }
+            return (
+              <div key={msg.id} style={S.chatRow}>
+                <span style={S.chatTime}>{fmtTime(msg.at)}</span>
+                <span style={Object.assign({}, S.chatName, mineMsg ? { color: "#f3e3a3" } : {})}>
+                  {msg.name}
+                </span>
+                <span style={S.chatText}>{msg.text}</span>
+              </div>
+            );
+          })}
+          <div ref={chatEndRef} />
+        </div>
+        <div style={S.chatInputRow}>
+          <input style={S.chatInput} placeholder="메시지 입력…" value={chatInput} maxLength={120}
+            onChange={function (ev) { setChatInput(ev.target.value); }}
+            onKeyDown={function (ev) { if (ev.key === "Enter") sendChat(); }} />
+          <button style={S.btnChatSend} onClick={sendChat}>전송</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!db) return null;
+  if (connError) {
+    return (
+      <div style={S.wrap}><div style={S.center}>
+        <div style={S.logo}>⚠️ 연결 오류</div>
+        <p style={S.subtle}>{connError}</p>
+        <p style={S.tiny}>Firebase 콘솔 &gt; Realtime Database &gt; 규칙 에서 아래처럼 설정 후 "게시":</p>
+        <pre style={S.pre}>{'{\n  "rules": {\n    ".read": true,\n    ".write": true\n  }\n}'}</pre>
+      </div></div>
+    );
+  }
+  if (loading) return <div style={S.wrap}><div style={S.center}>불러오는 중…</div></div>;
+
+  var r = room || emptyRoom();
+  var meP = me ? findById(r, me.id) : null;
+
+  var liveLvl = r.tournamentStartAt ? currentLevelIdx(r.tournamentStartAt) : 0;
+  var liveBlinds = blindsForLevel(liveLvl);
+  var nextBlinds = blindsForLevel(liveLvl + 1);
+  var remain = r.tournamentStartAt ? secsToNextLevel(r.tournamentStartAt) : LEVEL_SECONDS;
+
+  /* ========== [4] 홀덤 설명 카드뉴스 ========== */
+  if (screen === "guide") {
+    var slide = GUIDE_SLIDES[guideIdx];
+    var isLast = guideIdx === GUIDE_SLIDES.length - 1;
+    return (
+      <div style={S.wrap}><div style={S.center}>
+        <div style={S.guideCard}>
+          <div style={S.guideIcon}>{slide.icon}</div>
+          <div style={S.guideTitle}>{slide.title}</div>
+          <div style={S.guideBody}>
+            {slide.lines.map(function (ln, i) {
+              return ln === ""
+                ? <div key={i} style={{ height: 10 }} />
+                : <div key={i} style={S.guideLine}>{ln}</div>;
+            })}
+          </div>
+          <div style={S.guideDots}>
+            {GUIDE_SLIDES.map(function (_, i) {
+              return <span key={i} style={Object.assign({}, S.dot, i === guideIdx ? S.dotOn : {})} />;
+            })}
+          </div>
+        </div>
+        <div style={S.guideNav}>
+          <button style={Object.assign({}, S.btnGhostHalf, { visibility: guideIdx > 0 ? "visible" : "hidden" })}
+            onClick={function () { setGuideIdx(guideIdx - 1); }}>← 이전</button>
+          {isLast ? (
+            <button style={S.btnGoldHalf} onClick={function () { setGuideIdx(0); setScreen(nick ? "wait" : null); }}>돌아가기 ✓</button>
+          ) : (
+            <button style={S.btnGoldHalf} onClick={function () { setGuideIdx(guideIdx + 1); }}>다음 →</button>
+          )}
+        </div>
+        <p style={S.tiny}>{guideIdx + 1} / {GUIDE_SLIDES.length}</p>
+      </div></div>
+    );
+  }
+
+  /* ========== 첫 화면 (입장) ========== */
+  /* ========== 첫 화면: 닉네임 입력 (닉네임이 없을 때만) ========== */
+  if (!nick) {
+    return (
+      <div style={S.wrap}><div style={S.center}>
+        <div style={S.screenTopBar}>
+          <span />
+          <button style={bgmOn ? S.btnMusic : S.btnMusicOff} onClick={toggleBgm}
+            title={bgmOn ? "배경음악 끄기" : "배경음악 켜기"}>
+            {bgmOn ? "🎵" : "🔇"}
+          </button>
+        </div>
+        <div style={S.logo}>♠ NL 홀덤 토너먼트 ♣</div>
+        <p style={S.subtle}>닉네임을 입력하고 대기실로 입장하세요</p>
+        <input style={S.input} placeholder="닉네임" value={nameInput} maxLength={10}
+          onChange={function (ev) { setNameInput(ev.target.value); }}
+          onKeyDown={function (ev) { if (ev.key === "Enter") enterWaitingRoom(); }} />
+        <button style={S.btnGold} onClick={enterWaitingRoom}>대기실 입장</button>
+        <button style={S.btnGhost} onClick={function () { setGuideIdx(0); setScreen("guide"); }}>📖 홀덤 설명</button>
+        <p style={S.tiny}>시작칩 {STARTING_STACK.toLocaleString()} · 최대 {MAX_PLAYERS}명 · 레벨 5분 · 액션 {TURN_SECONDS}초</p>
+      </div></div>
+    );
+  }
+
+  /* ========== [1] 대기실 (단일 화면) — 닉네임 유지, 준비/채팅 모두 여기서 ========== */
+  if (screen === "wait" || !meP || r.stage === "lobby") {
+    var isLobby = r.stage === "lobby";
+    var isOver = r.stage === "gameover";
+    var full = alivePlayers(r).length >= MAX_PLAYERS;
+    var mySeatAlive = meP && meP.status !== "out";
+    var readyCount = r.players.filter(function (p) { return p.ready; }).length;
+    var allReady = readyCount >= MIN_READY_TO_START;
+
+    var statusTxt, actionBtn, notice = null;
+
+    if (isLobby) {
+      statusTxt = "대기 인원 " + r.players.length + "명 · " + readyCount + "명 준비 완료";
+      if (meP) {
+        actionBtn = (
+          <button style={meP.ready ? S.btnReadyOn : S.btnGold} onClick={toggleReady}>
+            {meP.ready ? "✅ 준비완료 (누르면 취소)" : "준비하기"}
+          </button>
+        );
+        notice = allReady
+          ? <p style={S.autoStartHot}>🎉 {readyCount}명 준비 완료 — 곧 시작합니다!</p>
+          : <p style={S.tiny}>{MIN_READY_TO_START}명 이상 준비 완료되면 자동으로 시작됩니다 (전원 준비 불필요)</p>;
+      } else if (full) {
+        actionBtn = <button style={Object.assign({}, S.btnGold, { opacity: 0.4 })} disabled>정원이 가득 찼습니다</button>;
+      } else if (nickTaken) {
+        /* 같은 닉네임 좌석이 남아 있으면 무한 '자리 배정 중' 대신 복구 경로 제공 */
+        actionBtn = <button style={S.btnGold} onClick={reclaimSeat}>내 자리 복구</button>;
+        notice = <p style={S.tiny}>같은 닉네임의 자리가 남아 있습니다. 복구하거나 닉네임을 변경해주세요.</p>;
+      } else {
+        actionBtn = <button style={Object.assign({}, S.btnGold, { opacity: 0.5 })} disabled>자리 배정 중…</button>;
+      }
+    } else if (isOver) {
+      var champ = r.players.slice().sort(function (x, y) { return (x.finishRank || 99) - (y.finishRank || 99); })[0];
+      statusTxt = "토너먼트 종료" + (champ ? " · 🏆 " + champ.name + " 우승" : "");
+      actionBtn = <button style={S.btnGold} onClick={newTournament}>새 토너먼트 준비</button>;
+    } else {
+      statusTxt = "게임 진행 중 · 핸드 #" + r.handNumber + " · L" + (r.level + 1) + " (" + r.sb.toLocaleString() + "/" + r.bb.toLocaleString() + ") · " + alivePlayers(r).length + "명 생존";
+      if (mySeatAlive) {
+        actionBtn = <button style={S.btnGold} onClick={function () { setScreen(null); }}>테이블로 돌아가기</button>;
+        notice = <p style={S.tiny}>내 자리는 아직 테이블에 남아 있습니다 (차례가 오면 자동 체크/폴드)</p>;
+      } else if (full) {
+        actionBtn = <button style={Object.assign({}, S.btnGold, { opacity: 0.4 })} disabled>정원이 가득 찼습니다</button>;
+      } else {
+        actionBtn = <button style={S.btnGold} onClick={function () { joinTable(nick); }}>중간 참여하기</button>;
+      }
+    }
+
+    return (
+      <div style={S.wrap}><div style={S.center}>
+        <div style={S.screenTopBar}>
+          <button style={S.btnBack} onClick={backToStart}>← 이전</button>
+          <span style={S.nickTag}>👤 {nick}</span>
+          <button style={bgmOn ? S.btnMusic : S.btnMusicOff} onClick={toggleBgm}
+            title={bgmOn ? "배경음악 끄기" : "배경음악 켜기"}>
+            {bgmOn ? "🎵" : "🔇"}
+          </button>
+        </div>
+
+        <div style={S.logo}>♠ 대기실 ♣</div>
+        <div style={S.statusCard}>{statusTxt}</div>
+
+        {/* [5] 경기 진행 중이면 실시간 상황판 (Firebase 실시간 동기화로 자동 갱신) */}
+        {!isLobby && !isOver && (
+          <div style={S.liveBox}>
+            <div style={S.liveTop}>
+              <span style={S.liveBadge}>LIVE</span>
+              <span style={S.livePot}>POT {r.players.reduce(function (s, p) { return s + (p.totalBetThisHand || 0); }, 0).toLocaleString()}</span>
+              <span style={S.liveStage}>
+                {{ preflop: "프리플롭", flop: "플랍", turn: "턴", river: "리버", handover: "핸드 정산" }[r.stage] || ""}
+              </span>
+            </div>
+            <div style={S.liveCards}>
+              {[0,1,2,3,4].map(function (i) {
+                return r.community[i]
+                  ? <Card key={i} card={r.community[i]} small={true} />
+                  : <div key={i} style={S.cardBackSm} />;
+              })}
+            </div>
+            <div style={S.liveFeed}>
+              {(r.log || []).slice(0, 3).map(function (line, i) {
+                return <div key={i} style={S.liveFeedLine}>{line}</div>;
+              })}
+            </div>
+          </div>
+        )}
+
+        {r.players.length > 0 && (
+          <div style={S.lobbyList}>
+            {r.players.map(function (p) {
+              var mineRow = me && p.id === me.id;
+              return (
+                <div key={p.id} style={S.lobbyRow}>
+                  <span style={mineRow ? { color: "#f3e3a3", fontWeight: 700 } : {}}>
+                    {p.name}{mineRow ? " (나)" : ""}
+                  </span>
+                  {p.status === "out"
+                    ? <span style={S.readyOff}>{p.finishRank ? p.finishRank + "위 종료" : "탈락"}</span>
+                    : (isLobby
+                        ? (p.ready
+                            ? <span style={S.readyOn}>✅ 준비완료</span>
+                            : <span style={S.readyOff}>⏳ 대기중{typeof p.joinedAt === "number"
+                                ? " · " + Math.max(0, Math.ceil((LOBBY_READY_TIMEOUT_MS - (Date.now() - p.joinedAt)) / 60000)) + "분 후 자동퇴장"
+                                : ""}</span>)
+                        : <span style={S.tiny}>{p.stack.toLocaleString()}</span>)}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {actionBtn}
+        {notice}
+        {isLobby && (
+          <p style={S.tiny}>❗ 대기중 상태로 30분이 지나면 자동으로 퇴장됩니다. 게임에서 10회 연속 액션을 하지 않으면 항복 처리 됩니다.</p>
+        )}
+
+        {/* [1][3] 채팅 (시각 표기 포함) */}
+        {renderChat()}
+
+        <div style={S.waitBtnRow}>
+          <button style={S.btnGhostHalf} onClick={function () { setGuideIdx(0); setScreen("guide"); }}>📖 홀덤 설명</button>
+          <button style={S.btnGhostHalf} onClick={resetTable}>🔄 테이블 리셋</button>
+        </div>
+      </div></div>
+    );
+  }
+
+  /* ========== 종료 ========== */
+  if (r.stage === "gameover") {
+    var ranked = r.players.slice().sort(function (x, y) { return (x.finishRank || 99) - (y.finishRank || 99); });
+    return (
+      <div style={S.wrap}><div style={S.center}>
+        <div style={S.logo}>🏆 토너먼트 종료</div>
+        <p style={Object.assign({}, S.subtle, { fontSize: 22 })}>{ranked[0] ? ranked[0].name + "님 우승!" : "게임 종료"}</p>
+        <div style={S.lobbyList}>
+          {ranked.map(function (p) {
+            return (
+              <div key={p.id} style={S.lobbyRow}>
+                <span>{(p.finishRank ? p.finishRank + "위 " : "- ") + p.name}</span>
+                <span style={S.tiny}>{p.stack.toLocaleString()}</span>
+              </div>
+            );
+          })}
+        </div>
+        <button style={S.btnGold} onClick={newTournament}>새 토너먼트</button>
+        <button style={S.btnGhost} onClick={function () { goWaitingRoom(false); }}>대기실로 돌아가기</button>
+      </div></div>
+    );
+  }
+
+  /* ========== [2] 게임 테이블 (타원형 · 시계방향) ========== */
+  var isMyTurn = r.currentTurnId === me.id && meP.status === "active";
+  var toCall = Math.max(0, (r.currentBet || 0) - (meP.betThisRound || 0));
+  var canCheck = toCall === 0;
+  var minRaiseTotal = (r.currentBet || 0) + (r.minRaise || r.bb);
+  var myMax = meP.betThisRound + meP.stack;
+  var pot = r.players.reduce(function (s, p) { return s + (p.totalBetThisHand || 0); }, 0);
+  var aliveCount = alivePlayers(r).length;
+  var turnLeft = r.turnDeadline ? Math.max(0, Math.ceil((r.turnDeadline - Date.now()) / 1000)) : 0;
+  var nextHandIn = (r.stage === "handover" && r.handoverAt)
+    ? Math.max(0, Math.ceil((r.handoverAt + r.handoverDelay - Date.now()) / 1000)) : 0;
+
+  /* [2] 탈락/항복자는 테이블 좌석에서 제거 (관전 모드) */
+  var seats = r.players.filter(function (p) { return p.status !== "out"; })
+    .sort(function (x, y) { return x.seat - y.seat; });
+  var mi = 0;
+  for (var k = 0; k < seats.length; k++) if (seats[k].id === me.id) { mi = k; break; }
+  var rotated = seats.slice(mi).concat(seats.slice(0, mi)); // [0] = 나 (하단 중앙), 이후 시계방향
+  var iAmSpectator = !!(meP && meP.status === "out");
+
+  var levelUpPending = liveLvl > r.level;
+  var stageTxt = { preflop: "프리플롭", flop: "플랍", turn: "턴", river: "리버", handover: "핸드 종료" }[r.stage] || "";
+  if (r.runout) stageTxt = stageTxt + " · 올인 오픈";
+
+  function shouldReveal(p) {
+    if (p.id === me.id) return true;
+    if (!r.revealCards) return false;
+    return p.status !== "folded" && p.status !== "waiting" && (p.cards || []).length > 0;
+  }
+
+  /* [1] 본인 족보 (로컬 계산 — DB에 저장 안 하므로 남에게 안 보임) */
+  var privateLabel = (meP.status !== "folded" && meP.status !== "out" && meP.status !== "waiting")
+    ? myHandLabel(meP.cards, r.community) : null;
+
+  /* 타원 위 좌석 좌표 (i=0 하단 중앙, 시계방향으로 배치) */
+  function seatPos(i, n) {
+    var ang = (90 + (360 / n) * i) * Math.PI / 180;
+    return {
+      left: (50 + 40 * Math.cos(ang)) + "%",
+      top: (50 + 37 * Math.sin(ang)) + "%"
+    };
+  }
+
+  function potBetTarget(pct) {
+    var potAfterCall = pot + toCall;
+    var raw = r.currentBet + potAfterCall * pct;
+    var rounded = Math.round(raw / 100) * 100;
+    return Math.min(Math.max(rounded, minRaiseTotal), myMax);
+  }
+  function potBtn(label, pct) {
+    var t = potBetTarget(pct);
+    var isAll = t >= myMax;
+    return (
+      <button key={label} style={S.btnPot} onClick={function () { doAction("raise", t); }}>
+        <span style={{ fontWeight: 700 }}>{label}</span>
+        <span style={S.btnPotSub}>{isAll ? "올인" : t.toLocaleString()}</span>
+      </button>
+    );
+  }
+
+  var winnerNames = (r.winnerIds || []).map(function (id) {
+    var p = findById(r, id); return p ? p.name : "";
+  }).filter(Boolean);
+
+  var n = rotated.length;
+
+  return (
+    <div style={S.tableWrap}>
+      <div style={S.topBar}>
+        {/* [2] 왼쪽 상단 나가기 (생존 중이면 항복 확인) */}
+        <button style={S.btnExit} onClick={leaveGame}>← 나가기</button>
+        <span style={S.tiny}>핸드 #{r.handNumber} · {aliveCount}명 생존</span>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <button style={S.btnTinyIcon} onClick={toggleMute}>{muted ? "🔇" : "🔊"}</button>
+          {meP.status !== "out"
+            ? <button style={S.btnSurrender} onClick={doSurrender}>🏳️ 항복</button>
+            : <span style={S.tiny}>관전 중</span>}
+          <button style={S.btnResetIcon} onClick={resetTableToLobby} title="테이블 리셋">🔄</button>
+        </div>
+      </div>
+
+      <div style={S.levelBar}>
+        <div>
+          <span style={S.levelBadge}>L{r.level + 1}</span>
+          <span style={S.levelBlind}> {r.sb.toLocaleString()} / {r.bb.toLocaleString()}</span>
+        </div>
+        <div style={S.levelTimer}>
+          다음 레벨 <span style={{ color: remain <= 30 ? "#d9534f" : "#f3e3a3", fontWeight: 700 }}>{pad2(Math.floor(remain/60))}:{pad2(remain%60)}</span>
+        </div>
+        <div style={S.tiny}>다음: {nextBlinds.sb.toLocaleString()} / {nextBlinds.bb.toLocaleString()}</div>
+      </div>
+
+      {levelUpPending && <div style={S.levelUpNotice}>📈 레벨 상승! 다음 핸드부터 {liveBlinds.sb.toLocaleString()} / {liveBlinds.bb.toLocaleString()} 적용</div>}
+      {r.runout && <div style={S.runoutNotice}>🔥 올인! 리버까지 오픈합니다…</div>}
+
+      {/* 타원형 테이블 */}
+      <div style={S.tableOuter}>
+        <div style={S.tableFelt}>
+          {/* 시계방향 안내 링 */}
+          <div style={S.directionRing} />
+          <div style={S.directionArrowTop}>↻</div>
+          <div style={S.directionArrowBottom}>↻</div>
+
+          {/* 중앙: 팟 + 커뮤니티 카드 */}
+          <div style={S.boardCenter}>
+            <div style={S.potLabel}>POT {pot.toLocaleString()}</div>
+            <div style={S.community}>
+              {[0,1,2,3,4].map(function (i) {
+                if (!r.community[i]) return <div key={"b" + i} style={S.cardBack} />;
+                /* 플랍 3장은 순차 플립, 턴/리버는 즉시 플립 */
+                var delay = i < 3 ? (i * 0.14) : 0;
+                return (
+                  <div key={r.handNumber + "-" + i}
+                    style={{ animation: "flipIn 0.45s ease-out both", animationDelay: delay + "s" }}>
+                    <Card card={r.community[i]} />
+                  </div>
+                );
+              })}
+            </div>
+            <div style={S.stageLabel}>{stageTxt} <span style={S.dirHint}>· 시계방향 ↻</span></div>
+          </div>
+
+          {/* 좌석 배치 */}
+          {rotated.map(function (p, i) {
+            var pos = seatPos(i, n);
+            var isMeSeat = p.id === me.id;
+            return (
+              <div key={p.id} style={Object.assign({ position: "absolute", transform: "translate(-50%,-50%)", zIndex: isMeSeat ? 4 : 2 }, pos)}>
+                <PlayerChip p={p} r={r}
+                  isMe={isMeSeat}
+                  isTurn={r.currentTurnId === p.id} turnLeft={turnLeft}
+                  reveal={shouldReveal(p)}
+                  isWinner={(r.winnerIds || []).indexOf(p.id) >= 0}
+                  privateLabel={isMeSeat ? privateLabel : null}
+                  dealOrder={i} />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {r.stage === "handover" && aliveCount >= 2 && (
+        <div style={S.handoverBar}>
+          {winnerNames.length > 0 && (
+            <div style={S.winnerBanner}>🏆 {winnerNames.join(", ")} 승리</div>
+          )}
+          <div style={S.tinyCenter}>다음 핸드 시작까지 {nextHandIn}초</div>
+          <button style={S.btnGhostSm} onClick={forceNextHand}>지금 시작</button>
+        </div>
+      )}
+
+      {isMyTurn && !r.runout && r.stage !== "handover" && (
+        <div style={S.actionZone}>
+          <div style={S.turnTimerBar}>
+            <div style={Object.assign({}, S.turnTimerFill, {
+              width: (turnLeft / TURN_SECONDS * 100) + "%",
+              background: turnLeft <= 3 ? "#d9534f" : "#d4af37"
+            })} />
+          </div>
+          <div style={Object.assign({}, S.turnTimerTxt, turnLeft <= 3 ? { color: "#d9534f", animation: "pulseRed 0.8s infinite" } : {})}>
+            남은 시간 {turnLeft}초
+          </div>
+
+          <div style={S.actionBar}>
+            <button style={S.btnAction} onClick={function () { doAction("fold"); }}>폴드</button>
+            {canCheck
+              ? <button style={S.btnAction} onClick={function () { doAction("check"); }}>체크</button>
+              : <button style={S.btnAction} onClick={function () { doAction("call"); }}>콜 {toCall.toLocaleString()}</button>}
+            <button style={S.btnAllin} onClick={function () { doAction("allin"); }}>올인 {myMax.toLocaleString()}</button>
+          </div>
+
+          <div style={S.potRow}>
+            {potBtn("25%", 0.25)}
+            {potBtn("50%", 0.5)}
+            {potBtn("75%", 0.75)}
+            {potBtn("100%", 1.0)}
+          </div>
+
+          <div style={S.customRow}>
+            <input style={S.raiseInput} type="number" inputMode="numeric"
+              placeholder={"직접 입력 (최소 " + minRaiseTotal.toLocaleString() + ")"}
+              value={raiseInput} onChange={function (ev) { setRaiseInput(ev.target.value); }} />
+            <button style={S.btnAction} onClick={function () { doAction("raise", Math.max(Number(raiseInput) || 0, minRaiseTotal)); }}>레이즈</button>
+          </div>
+        </div>
+      )}
+
+      {r.runout && <div style={S.waitBar}>카드를 오픈하는 중…</div>}
+      {!isMyTurn && !r.runout && meP.status === "active" && r.stage !== "handover" && <div style={S.waitBar}>다른 플레이어의 차례입니다…</div>}
+      {meP.status === "waiting" && <div style={S.waitBar}>🪑 다음 핸드부터 참가합니다</div>}
+      {meP.status === "folded" && r.stage !== "handover" && <div style={S.waitBar}>이번 핸드는 폴드했습니다</div>}
+      {meP.status === "allin" && !r.runout && r.stage !== "handover" && <div style={S.waitBar}>올인 상태입니다</div>}
+      {iAmSpectator && (
+        <div style={S.spectatorBar}>
+          👁 관전 모드 — {meP.finishRank ? meP.finishRank + "위로 종료되었습니다" : "탈락했습니다"} · 게임이 끝날 때까지 지켜볼 수 있어요
+        </div>
+      )}
+
+      {/* [3] 경기 중 하단은 대화창으로 */}
+      <div style={S.gameChatWrap}>{renderChat(true)}</div>
+    </div>
+  );
+}
+
+function Card(props) {
+  var rank = props.card[0], suit = props.card[1];
+  var base = props.big ? S.cardBig : (props.small ? S.cardSm : S.card);
+  var suitSize = props.big ? 20 : (props.small ? 12 : 18);
+  return (
+    <div style={Object.assign({}, base, { color: SUIT_COLOR[suit] }, props.win ? S.cardWin : {})}>
+      <div>{rankLabel(rank)}</div>
+      <div style={{ fontSize: suitSize, lineHeight: 1 }}>{SUIT_GLYPH[suit]}</div>
+    </div>
+  );
+}
+
+function PlayerChip(props) {
+  var p = props.p, r = props.r;
+  if (!p) return <div />;
+  var folded = p.status === "folded";
+  var out = p.status === "out";
+  var waiting = p.status === "waiting";
+  var win = props.isWinner;
+
+  var mine = !!props.isMe;
+
+  /* [3] 본인 좌석은 더 크고 눈에 띄게 */
+  var style = Object.assign({}, S.playerCard, mine ? S.playerCardMe : {}, {
+    borderColor: win ? "#d4af37" : (props.isTurn ? "#d4af37" : (mine ? "#6b7a6b" : "#3a3f3a")),
+    opacity: out ? 0.4 : ((folded || waiting) ? 0.55 : 1),
+    boxShadow: props.isTurn ? "0 0 16px rgba(212,175,55,0.6)" : "0 2px 8px rgba(0,0,0,0.5)"
+  });
+  if (win) style.animation = "glow 1.2s ease-in-out infinite";
+
+  var handName = r.handNames && r.handNames[p.id];
+
+  return (
+    <div style={style}>
+      {win && <div style={S.winBadge}>🏆 WINNER</div>}
+      <div style={S.playerNameRow}>
+        {p.seat === r.dealerSeat && <span style={S.dealerBtn}>D</span>}
+        {p.seat === r.sbSeat && <span style={Object.assign({}, S.posBadge, { background: "#5b8f6f", color: "#0c1a12" })}>SB</span>}
+        {p.seat === r.bbSeat && <span style={Object.assign({}, S.posBadge, { background: "#3f6fa8", color: "#f0f6ff" })}>BB</span>}
+        <span style={S.playerName}>{p.name}</span>
+      </div>
+      <div style={S.playerStack}>{p.stack.toLocaleString()}</div>
+
+      {props.isTurn && (
+        <div style={Object.assign({}, S.turnCount, props.turnLeft <= 3 ? { color: "#d9534f" } : {})}>⏱ {props.turnLeft}s</div>
+      )}
+      {(p.timeoutStreak || 0) >= 5 && p.status !== "out" && (
+        <div style={S.streakWarn}>⏰ 연속초과 {p.timeoutStreak}/10</div>
+      )}
+      {/* [4] 베팅 금액 강조 */}
+      {p.betThisRound > 0 && (
+        <div style={mine ? S.betChipMe : S.betChip}>
+          <span style={S.betChipLabel}>BET</span>
+          <span style={S.betChipNum}>{p.betThisRound.toLocaleString()}</span>
+        </div>
+      )}
+
+      <div style={S.holeCards}>
+        {(p.cards || []).map(function (cd, i) {
+          /* 새 핸드마다 key가 바뀌어 딜링 애니메이션이 재생됨 */
+          var dealDelay = ((props.dealOrder || 0) * 0.1 + i * 0.05);
+          if (props.reveal && cd) {
+            /* 쇼다운/올인 오픈 시엔 뒤집는 연출, 딜링 시엔 날아오는 연출 */
+            var animName = r.revealCards ? "flipIn" : "dealIn";
+            var animDelay = r.revealCards ? (i * 0.12) : dealDelay;
+            return (
+              <div key={r.handNumber + "-o-" + i}
+                style={{ animation: animName + " 0.4s cubic-bezier(.2,.85,.35,1) both", animationDelay: animDelay + "s" }}>
+                <Card card={cd} win={win} small={!mine} big={mine} />
+              </div>
+            );
+          }
+          if (p.cards && p.cards.length) {
+            return (
+              <div key={r.handNumber + "-c-" + i}
+                style={Object.assign({}, mine ? S.cardBackBig : S.cardBackSm, {
+                  animation: "dealIn 0.4s cubic-bezier(.2,.85,.35,1) both",
+                  animationDelay: dealDelay + "s"
+                })} />
+            );
+          }
+          return null;
+        })}
+      </div>
+
+      {/* [1] 본인 전용 실시간 족보 */}
+      {props.privateLabel && <div style={S.privateHand}>{props.privateLabel}</div>}
+
+      {handName && r.revealCards && <div style={S.handNameTxt}>{handName}</div>}
+      {out && <div style={S.outLabel}>{p.finishRank ? p.finishRank + "위 종료" : "탈락"}</div>}
+      {waiting && <div style={S.waitLabel}>대기 중</div>}
+      {folded && !out && <div style={S.outLabel}>폴드</div>}
+      {p.status === "allin" && <div style={S.allinLabel}>올인</div>}
+    </div>
+  );
+}
+
+var S = {
+  wrap: { minHeight: "100vh", background: "radial-gradient(circle at 50% 0%, #1a2420, #0c0f0d)", color: "#ece6d8", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 },
+  center: { textAlign: "center", maxWidth: 380, width: "100%" },
+  logo: { fontSize: 26, letterSpacing: 2, marginBottom: 10, color: "#d4af37" },
+  subtle: { color: "#b9b2a0", marginBottom: 18, fontSize: 14 },
+  tiny: { color: "#8a8576", fontSize: 12, marginTop: 8 },
+  tinyCenter: { color: "#b9b2a0", fontSize: 13, textAlign: "center", marginBottom: 8 },
+  pre: { background: "#1a1d19", padding: 12, borderRadius: 8, fontSize: 12, textAlign: "left", color: "#f3e3a3" },
+  input: { width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #3a3f3a", background: "#1a1d19", color: "#ece6d8", fontSize: 16, marginBottom: 12, outline: "none" },
+  btnGold: { width: "100%", padding: "12px 14px", borderRadius: 8, border: "none", background: "linear-gradient(180deg,#e7c465,#b9942f)", color: "#1a1500", fontWeight: 700, fontSize: 15, cursor: "pointer", marginBottom: 10 },
+  btnReadyOn: { width: "100%", padding: "12px 14px", borderRadius: 8, border: "1px solid #3f8f5f", background: "linear-gradient(180deg,#2c6e46,#1d4c30)", color: "#c8f5d8", fontWeight: 700, fontSize: 15, cursor: "pointer", marginBottom: 10 },
+  btnGhost: { width: "100%", padding: "10px 14px", borderRadius: 8, border: "1px solid #3a3f3a", background: "transparent", color: "#b9b2a0", fontSize: 14, cursor: "pointer", marginBottom: 10 },
+  btnGhostSm: { padding: "6px 14px", borderRadius: 6, border: "1px solid #3a3f3a", background: "transparent", color: "#8a8576", fontSize: 12, cursor: "pointer" },
+  resetBar: { textAlign: "center", padding: "14px 10px 6px" },
+  btnResetTiny: { background: "transparent", border: "1px solid #33261b", color: "#6b6459", fontSize: 10, borderRadius: 6, padding: "3px 10px", cursor: "pointer", opacity: 0.75 },
+  btnBack: { padding: "6px 12px", borderRadius: 6, border: "1px solid #3a3f3a", background: "transparent", color: "#b9b2a0", fontSize: 13, cursor: "pointer" },
+  btnGoldHalf: { flex: 1, padding: "12px 14px", borderRadius: 8, border: "none", background: "linear-gradient(180deg,#e7c465,#b9942f)", color: "#1a1500", fontWeight: 700, fontSize: 14, cursor: "pointer" },
+  btnGhostHalf: { flex: 1, padding: "12px 14px", borderRadius: 8, border: "1px solid #3a3f3a", background: "transparent", color: "#b9b2a0", fontSize: 14, cursor: "pointer" },
+  lobbyTopRow: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 },
+  lobbyList: { background: "rgba(20,24,21,0.5)", border: "1px solid #2a2f29", borderRadius: 8, padding: 10, marginBottom: 16, textAlign: "left" },
+  lobbyRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 4px", borderBottom: "1px solid #22251f", fontSize: 14 },
+  readyOn: { color: "#8fd6a8", fontSize: 12, fontWeight: 700 },
+  readyOff: { color: "#8a8576", fontSize: 12 },
+  autoStartHot: { color: "#f3e3a3", fontSize: 14, fontWeight: 700, marginTop: 6, animation: "pulseRed 1.2s infinite" },
+
+  /* 카드뉴스 */
+  guideCard: { background: "radial-gradient(ellipse at 50% 30%, #1f6b4a 0%, #14442f 75%, #0c2a1c 100%)", border: "6px solid #3a2a14", borderRadius: 20, padding: "34px 22px 26px", minHeight: 380, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", boxShadow: "0 8px 30px rgba(0,0,0,0.6)" },
+  guideIcon: { fontSize: 44, marginBottom: 10 },
+  guideTitle: { fontSize: 21, fontWeight: 700, color: "#f3e3a3", marginBottom: 18, letterSpacing: 1 },
+  guideBody: { flex: 1 },
+  guideLine: { fontSize: 14, lineHeight: 1.9, color: "#e8f2ea" },
+  guideDots: { display: "flex", gap: 6, marginTop: 18 },
+  dot: { width: 8, height: 8, borderRadius: "50%", background: "#2f5a45", display: "inline-block" },
+  dotOn: { background: "#d4af37" },
+  guideNav: { display: "flex", gap: 10, marginTop: 14 },
+
+  tableWrap: { minHeight: "100vh", background: "#0c0f0d", color: "#ece6d8", display: "flex", flexDirection: "column" },
+  topBar: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px solid #1f2420" },
+  brand: { color: "#d4af37", fontWeight: 700, fontSize: 15 },
+  btnSurrender: { background: "transparent", border: "1px solid #6b3a3a", color: "#c88a8a", fontSize: 11, borderRadius: 6, padding: "4px 10px", cursor: "pointer" },
+  btnTinyIcon: { background: "transparent", border: "1px solid #3a3f3a", fontSize: 13, borderRadius: 6, padding: "3px 8px", cursor: "pointer" },
+  /* [2] 인게임 나가기 */
+  btnExit: { background: "transparent", border: "1px solid #3a3f3a", color: "#b9b2a0", fontSize: 12, borderRadius: 6, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" },
+
+  /* [2] 화면 상단바 (첫화면/대기실) + 음악 버튼 */
+  screenTopBar: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, minHeight: 30 },
+  btnMusic: { background: "rgba(26,42,34,0.85)", border: "1px solid #2f5a45", fontSize: 15, lineHeight: 1, borderRadius: "50%", width: 34, height: 34, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 },
+  btnMusicOff: { background: "rgba(30,26,26,0.85)", border: "1px solid #4a3a3a", fontSize: 15, lineHeight: 1, borderRadius: "50%", width: 34, height: 34, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0, opacity: 0.65 },
+  nickTag: { color: "#f3e3a3", fontSize: 13, fontWeight: 700, background: "rgba(26,42,34,0.6)", border: "1px solid #2f5a45", borderRadius: 999, padding: "4px 12px" },
+  statusCard: { background: "rgba(20,24,21,0.6)", border: "1px solid #2a2f29", borderRadius: 10, padding: "10px 12px", marginBottom: 14, fontSize: 13, color: "#cfe9da" },
+  waitBtnRow: { display: "flex", gap: 8, marginTop: 12 },
+  /* [5] 대기실 실시간 상황판 */
+  liveBox: { background: "radial-gradient(ellipse at 50% 30%, #1a5a3d 0%, #123a28 80%)", border: "1px solid #2f5a45", borderRadius: 12, padding: "10px 12px", marginBottom: 14 },
+  liveTop: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" },
+  liveBadge: { background: "#d9534f", color: "#fff", fontSize: 9, fontWeight: 800, borderRadius: 4, padding: "2px 6px", letterSpacing: 1, animation: "pulseRed 1.6s infinite" },
+  livePot: { color: "#f7e9b0", fontWeight: 900, fontSize: 15, fontFamily: "'DIN Alternate','Roboto Mono',Consolas,monospace", fontVariantNumeric: "tabular-nums" },
+  liveStage: { color: "#cfe9da", fontSize: 11, letterSpacing: 1 },
+  liveCards: { display: "flex", gap: 4, justifyContent: "center", marginBottom: 8 },
+  liveFeed: { borderTop: "1px dashed rgba(255,255,255,0.12)", paddingTop: 6, textAlign: "left" },
+  liveFeedLine: { fontSize: 11, color: "#a9c4b2", padding: "1px 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+
+  /* [1] 대기실 채팅 */
+  chatBox: { background: "rgba(20,24,21,0.6)", border: "1px solid #2a2f29", borderRadius: 10, padding: 10, marginTop: 16, textAlign: "left" },
+  chatTitle: { color: "#8a8576", fontSize: 12, marginBottom: 8, fontWeight: 700 },
+  chatLog: { height: 150, overflowY: "auto", background: "rgba(10,14,11,0.6)", borderRadius: 8, padding: "8px 10px", marginBottom: 8 },
+  chatEmpty: { color: "#5f6a5f", fontSize: 12, textAlign: "center", paddingTop: 52 },
+  chatRow: { marginBottom: 6, fontSize: 13, lineHeight: 1.45, wordBreak: "break-word" },
+  /* [3] 채팅 시각 */
+  chatTime: { color: "#5f6a5f", fontSize: 10, marginRight: 6, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
+  chatName: { color: "#8fb8a0", fontWeight: 700, marginRight: 6, fontSize: 12 },
+  chatText: { color: "#dfe6df" },
+  chatBoxCompact: { background: "rgba(20,24,21,0.6)", borderTop: "1px solid #1f2420", padding: "8px 10px", textAlign: "left" },
+  chatLogCompact: { height: 96, overflowY: "auto", background: "rgba(10,14,11,0.6)", borderRadius: 8, padding: "6px 10px", marginBottom: 6 },
+  gameChatWrap: {},
+  chatSysRow: { marginBottom: 6, fontSize: 12, lineHeight: 1.45, wordBreak: "break-word" },
+  chatSysText: { color: "#e8c96a", fontStyle: "italic" },
+  chatInputRow: { display: "flex", gap: 6 },
+  chatInput: { flex: 1, minWidth: 0, padding: "9px 10px", borderRadius: 8, border: "1px solid #3a3f3a", background: "#14181a", color: "#ece6d8", fontSize: 14, outline: "none" },
+  btnChatSend: { background: "#1a2a22", border: "1px solid #2f5a45", color: "#cfe9da", padding: "9px 14px", borderRadius: 8, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" },
+  btnResetIcon: { background: "transparent", border: "1px solid #4a2f2f", color: "#c88a8a", fontSize: 11, borderRadius: 6, padding: "3px 7px", cursor: "pointer" },
+  levelBar: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 14px", background: "rgba(18,22,19,0.5)", borderBottom: "1px solid #1f2420", gap: 8, flexWrap: "wrap" },
+  levelBadge: { background: "#d4af37", color: "#1a1500", fontWeight: 800, fontSize: 12, borderRadius: 6, padding: "2px 8px" },
+  levelBlind: { color: "#f3e3a3", fontWeight: 700, fontSize: 14, marginLeft: 6 },
+  levelTimer: { fontSize: 13, color: "#b9b2a0" },
+  levelUpNotice: { textAlign: "center", padding: "6px 10px", background: "#3a2a14", color: "#f3e3a3", fontSize: 13, fontWeight: 700 },
+  runoutNotice: { textAlign: "center", padding: "6px 10px", background: "#3a1414", color: "#ffb3b3", fontSize: 13, fontWeight: 700 },
+
+  /* [2] 타원형 테이블 */
+  tableOuter: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "14px 6px", minHeight: 400 },
+  tableFelt: {
+    position: "relative",
+    width: "100%", maxWidth: 560,
+    height: "min(58vh, 520px)", minHeight: 380,
+    background: "radial-gradient(ellipse at 50% 40%, #22754f 0%, #175038 60%, #0d2f1f 100%)",
+    border: "10px solid #4a3018",
+    borderRadius: "50%",
+    boxShadow: "inset 0 0 40px rgba(0,0,0,0.55), 0 10px 34px rgba(0,0,0,0.6)"
+  },
+  directionRing: {
+    position: "absolute", left: "16%", top: "16%", right: "16%", bottom: "16%",
+    border: "1.5px dashed rgba(243,227,163,0.18)", borderRadius: "50%", pointerEvents: "none"
+  },
+  directionArrowTop: { position: "absolute", top: "12%", left: "50%", transform: "translateX(-50%) scaleX(-1)", color: "rgba(243,227,163,0.4)", fontSize: 17, pointerEvents: "none" },
+  directionArrowBottom: { position: "absolute", bottom: "12%", left: "50%", transform: "translateX(-50%)", color: "rgba(243,227,163,0.4)", fontSize: 17, pointerEvents: "none" },
+  boardCenter: {
+    position: "absolute", left: "50%", top: "50%", transform: "translate(-50%,-50%)",
+    textAlign: "center", zIndex: 1, width: "70%"
+  },
+  potLabel: {
+    color: "#f7e9b0", fontWeight: 900, marginBottom: 7, fontSize: 18, letterSpacing: 0.8,
+    textShadow: "0 2px 5px rgba(0,0,0,0.85)",
+    fontFamily: "'DIN Alternate','Roboto Mono','SF Mono',Consolas,monospace",
+    fontVariantNumeric: "tabular-nums"
+  },
+  community: { display: "flex", gap: 4, justifyContent: "center" },
+  stageLabel: { marginTop: 7, fontSize: 11, color: "#cfe9da", letterSpacing: 1.5 },
+  dirHint: { color: "rgba(243,227,163,0.55)", fontSize: 10 },
+
+  card: { width: 32, height: 45, background: "#fffdf7", borderRadius: 5, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, boxShadow: "0 2px 4px rgba(0,0,0,0.4)", animation: "popIn 0.25s ease-out" },
+  cardSm: { width: 24, height: 34, background: "#fffdf7", borderRadius: 4, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 11, boxShadow: "0 1px 3px rgba(0,0,0,0.4)", animation: "popIn 0.25s ease-out" },
+  /* [3] 본인 홀카드 — 크게 */
+  cardBig: { width: 42, height: 59, background: "#fffdf7", borderRadius: 6, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 20, boxShadow: "0 3px 8px rgba(0,0,0,0.6)", animation: "popIn 0.25s ease-out" },
+  cardBackBig: { width: 42, height: 59, borderRadius: 6, background: "repeating-linear-gradient(45deg,#1c3a2c,#1c3a2c 5px,#163023 5px,#163023 10px)", border: "1px solid #0c2a1c", boxShadow: "0 3px 8px rgba(0,0,0,0.6)" },
+  cardWin: { boxShadow: "0 0 10px rgba(212,175,55,0.9)" },
+  cardBack: { width: 32, height: 45, borderRadius: 5, background: "repeating-linear-gradient(45deg,#1c3a2c,#1c3a2c 4px,#163023 4px,#163023 8px)", border: "1px solid #0c2a1c" },
+  cardBackSm: { width: 24, height: 34, borderRadius: 4, background: "repeating-linear-gradient(45deg,#1c3a2c,#1c3a2c 4px,#163023 4px,#163023 8px)", border: "1px solid #0c2a1c" },
+
+  playerCard: { background: "rgba(10,15,12,0.92)", border: "2px solid #3a3f3a", borderRadius: 10, padding: "5px 8px", minWidth: 82, maxWidth: 108, textAlign: "center", position: "relative" },
+  /* [3] 본인 좌석 패널 — 조금 더 크게 */
+  playerCardMe: { background: "rgba(12,20,15,0.96)", borderRadius: 12, padding: "7px 11px", minWidth: 104, maxWidth: 140 },
+  winBadge: { position: "absolute", top: -9, left: "50%", transform: "translateX(-50%)", background: "#d4af37", color: "#1a1500", fontSize: 8, fontWeight: 800, borderRadius: 8, padding: "1px 7px", whiteSpace: "nowrap", zIndex: 3 },
+  playerNameRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 3, fontSize: 11, fontWeight: 700, flexWrap: "wrap" },
+  dealerBtn: { background: "#d4af37", color: "#1a1500", fontSize: 8, fontWeight: 800, borderRadius: "50%", width: 13, height: 13, display: "inline-flex", alignItems: "center", justifyContent: "center" },
+  posBadge: { fontSize: 8, fontWeight: 800, borderRadius: 3, padding: "1px 3px" },
+  playerName: { color: "#ece6d8", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 62 },
+  playerStack: { fontSize: 10, color: "#cfe9da", marginTop: 1 },
+  turnCount: { fontSize: 10, color: "#f3e3a3", fontWeight: 700, marginTop: 1 },
+  streakWarn: { fontSize: 8.5, color: "#ff9d5c", fontWeight: 800, marginTop: 1 },
+  /* [4] 베팅 금액 강조 */
+  betChip: {
+    display: "inline-flex", alignItems: "center", gap: 4, marginTop: 3,
+    background: "linear-gradient(180deg,#f0cf6a,#c8a132)", color: "#1a1500",
+    borderRadius: 10, padding: "2px 8px",
+    border: "1px solid #8a6d1c", boxShadow: "0 2px 6px rgba(0,0,0,0.55)"
+  },
+  betChipMe: {
+    display: "inline-flex", alignItems: "center", gap: 5, marginTop: 4,
+    background: "linear-gradient(180deg,#ffe28a,#d4af37)", color: "#1a1500",
+    borderRadius: 12, padding: "3px 11px",
+    border: "1.5px solid #8a6d1c", boxShadow: "0 3px 10px rgba(212,175,55,0.5)"
+  },
+  betChipLabel: { fontSize: 8, fontWeight: 800, letterSpacing: 0.6, opacity: 0.75 },
+  betChipNum: {
+    fontSize: 14, fontWeight: 900, letterSpacing: 0.3,
+    fontFamily: "'DIN Alternate','Roboto Mono','SF Mono',Consolas,monospace",
+    fontVariantNumeric: "tabular-nums"
+  },
+  holeCards: { display: "flex", gap: 3, justifyContent: "center", marginTop: 4 },
+  privateHand: { fontSize: 9, color: "#8fd6a8", marginTop: 3, fontWeight: 700, background: "rgba(20,48,31,0.8)", borderRadius: 6, padding: "1px 6px", display: "inline-block" },
+  handNameTxt: { fontSize: 9, color: "#f3e3a3", marginTop: 2, fontWeight: 700 },
+  outLabel: { fontSize: 9, color: "#d9534f", marginTop: 2, fontWeight: 700 },
+  allinLabel: { fontSize: 9, color: "#ff9d5c", marginTop: 2, fontWeight: 700 },
+  waitLabel: { fontSize: 9, color: "#8fd6a8", marginTop: 2, fontWeight: 700 },
+
+  handoverBar: { padding: "10px 14px", textAlign: "center", borderTop: "1px solid #1f2420" },
+  winnerBanner: { color: "#f3e3a3", fontWeight: 700, fontSize: 15, marginBottom: 6 },
+
+  actionZone: { borderTop: "1px solid #1f2420", padding: "8px 10px 12px" },
+  turnTimerBar: { height: 4, background: "#22251f", borderRadius: 2, overflow: "hidden", marginBottom: 4 },
+  turnTimerFill: { height: "100%", transition: "width 0.4s linear" },
+  turnTimerTxt: { textAlign: "center", fontSize: 12, color: "#b9b2a0", marginBottom: 8 },
+  actionBar: { display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginBottom: 8 },
+  btnAction: { background: "#1c2420", border: "1px solid #3a3f3a", color: "#ece6d8", padding: "10px 16px", borderRadius: 8, fontSize: 14, cursor: "pointer" },
+  btnAllin: { background: "#7a1f1f", border: "1px solid #a93a3a", color: "#fff", padding: "10px 16px", borderRadius: 8, fontSize: 14, cursor: "pointer", fontWeight: 700 },
+  potRow: { display: "flex", gap: 6, justifyContent: "center", marginBottom: 8 },
+  btnPot: { flex: 1, maxWidth: 90, background: "#1a2a22", border: "1px solid #2f5a45", color: "#cfe9da", padding: "8px 4px", borderRadius: 8, fontSize: 13, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 },
+  btnPotSub: { fontSize: 10, color: "#8fb8a0" },
+  customRow: { display: "flex", gap: 6, justifyContent: "center" },
+  raiseInput: { flex: 1, maxWidth: 220, padding: "10px", borderRadius: 8, border: "1px solid #3a3f3a", background: "#14181a", color: "#ece6d8", fontSize: 13 },
+
+  waitBar: { textAlign: "center", padding: 10, color: "#8a8576", fontSize: 13, borderTop: "1px solid #1f2420" },
+  spectatorBar: { textAlign: "center", padding: "9px 12px", color: "#a9c4b2", fontSize: 12.5, background: "rgba(20,40,28,0.5)", borderTop: "1px solid #1f2420" },
+  log: { maxHeight: 110, overflowY: "auto", padding: "8px 14px 14px", fontSize: 12, color: "#9aa39a", borderTop: "1px solid #1f2420" },
+  logLine: { padding: "2px 0" }
+};
+
+if (db) {
+  ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+}
+</script>
+</body>
+</html>
